@@ -32,7 +32,15 @@
   - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
   - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
     After the fixes it turned 21° and stopped 4–5 cm from an obstacle (a leg). No contact.
-  - TODO: braking from 0.3/0.5 m/s in open space (≥2.5 m); approach toward a wall/box; turn with a wall 10–20 cm off the side.
+  - Braking on the floor (safety governor chain, 2026-09-25):
+    | speed | stop | distance | time |
+    |---|---|---|---|
+    | 0.315 m/s | release (smoother 0.5 m/s²) | 15.6 cm | 0.91 s |
+    | 0.316 m/s | estop (VESC brake current) | 7.6 cm | 0.44 s |
+    | 0.541 m/s | estop | 14.0 cm | 0.61 s |
+    | 0.20 m/s reverse | release | 8.6 cm | 0.6 s |
+    Soft start: 0 → 0.3 m/s in about 1 s. Measured top speed 0.54 m/s for a 0.5 command (check the wheel radius).
+  - TODO: approach toward a wall/box (≥25 cm tall: the lidar is at 19.5 cm); turn with a wall 10–20 cm off the side.
   - TODO: people need a larger margin than furniture. The stop zone ahead is 10 cm, which is fine for walls but not for feet.
 - [ ] Measure the real track width (center to center) and check it with a 360° spin.
 
