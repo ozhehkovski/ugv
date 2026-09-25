@@ -29,8 +29,9 @@
 - [x] After estop release, require a zero command before moving again.
 - [x] Web panel (map + lidar + footprint, camera, status, joystick with dead-man, big STOP).
 - [x] Heading hold: gyro yaw-rate PI in the driver. The front casters swing and push the robot off course. Gyro sign verified (+z = CCW).
-- [ ] Verify heading hold on a 1.5 m straight run: drift < 2°.
-- [ ] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
+- [x] Heading hold on the floor: reverse 0.9 m at 0.2 m/s → −0.5°, 0.6 cm lateral; forward 0.75 m at 0.3 m/s → 0.0°, −1.2 cm (wheel odometry).
+  Turn by 75° → 74.5°. TODO: a longer 3–5 m run checked against an external mark, not only odometry.
+- [x] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
   - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
   - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
     After the fixes it turned 21° and stopped 4–5 cm from an obstacle (a leg). No contact.
@@ -42,7 +43,8 @@
     | 0.541 m/s | estop | 14.0 cm | 0.61 s |
     | 0.20 m/s reverse | release | 8.6 cm | 0.6 s |
     Soft start: 0 → 0.3 m/s in about 1 s. Measured top speed 0.54 m/s for a 0.5 command (check the wheel radius).
-  - TODO: approach toward a wall/box (≥25 cm tall: the lidar is at 19.5 cm); turn with a wall 10–20 cm off the side.
+  - Approach toward a bookshelf at 0.3 m/s: full speed until 0.6 m, smooth slowdown, stop 6 cm from it, held.
+  - Turn beside a wall (2 cm off the front-right corner): toward the wall 0°, the robot is held; away from the wall +50° freely.
   - TODO: people need a larger margin than furniture. The stop zone ahead is 10 cm, which is fine for walls but not for feet.
 - [ ] Measure the real track width (center to center) and check it with a 360° spin.
 

@@ -4,6 +4,7 @@
   floor_test.py brake    <v> <run_m> [estop]   drive straight, then stop (release or estop); stopping distance
   floor_test.py approach <v> <max_m>           drive toward what is ahead; how the safety zones slow/stop
   floor_test.py turn     <w> <secs>            tank turn in place; how the sweep check limits rotation
+  floor_test.py turnby   <deg> [w]             turn in place by an angle (+ = left), e.g. to aim at a wall
 
 Guards: aborts when the front gap < 0.10 m, stops after max distance/time, always stops on exit.
 """
@@ -23,7 +24,7 @@ from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformException, TransformListener
 
 FRONT, REAR, HALF_W = 0.555, -0.065, 0.28
-ABORT_GAP = 0.10
+ABORT_GAP = 0.04   # below the governor stop margin (0.05): trips only if the governor fails
 
 
 def yaw_of(q) -> float:
@@ -169,6 +170,20 @@ class Tester:
         self.spin(0.5)
         print(f"RESULT turn: turned {math.degrees(total):+.1f}° in {secs}s, nearest point {self.sweep_min():.2f} m")
 
+    def turn_by(self, deg: float, w: float) -> None:
+        target = math.radians(abs(deg))
+        sign = 1.0 if deg > 0 else -1.0
+        total, prev, t0 = 0.0, self.pose[2], time.monotonic()
+        while abs(total) < target - math.radians(3) and time.monotonic() - t0 < 15:
+            self.send(0.0, sign * w)
+            self.spin(0.05)
+            total += math.atan2(math.sin(self.pose[2] - prev), math.cos(self.pose[2] - prev))
+            prev = self.pose[2]
+        self.stop()
+        self.spin(0.8)
+        total += math.atan2(math.sin(self.pose[2] - prev), math.cos(self.pose[2] - prev))
+        print(f"RESULT turnby: asked {deg:+.0f}°, turned {math.degrees(total):+.1f}°, front_gap {self.front_gap():.2f} m")
+
 
 def main() -> None:
     mode = sys.argv[1]
@@ -180,6 +195,8 @@ def main() -> None:
             t.brake(float(sys.argv[2]), float(sys.argv[3]), len(sys.argv) > 4 and sys.argv[4] == "estop")
         elif mode == "approach":
             t.approach(float(sys.argv[2]), float(sys.argv[3]))
+        elif mode == "turnby":
+            t.turn_by(float(sys.argv[2]), float(sys.argv[3]) if len(sys.argv) > 3 else 0.4)
         elif mode == "turn":
             t.turn(float(sys.argv[2]), float(sys.argv[3]))
         else:
