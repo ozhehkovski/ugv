@@ -1,0 +1,81 @@
+# Velocity safety chain:
+#   cmd_vel/{teleop,follow,nav} → cmd_mux → cmd_vel_mux → velocity_smoother → cmd_vel_smoothed
+#   → collision_monitor → cmd_vel_safe → vesc_driver (hard limits + ramp + watchdog, see robot.yaml)
+#
+# Chassis (base_footprint = drive-axle center): x ∈ [-0.065, 0.555], y ∈ [-0.28, 0.28].
+# Tank-turn sweep radius of the nose corners ≈ 0.62 m.
+
+cmd_mux:
+  ros__parameters:
+    inputs: ["teleop", "follow", "nav"]
+    rate_hz: 20.0
+    teleop: {topic: "cmd_vel/teleop", priority: 100, timeout: 0.5}
+    follow: {topic: "cmd_vel/follow", priority: 50, timeout: 0.3}
+    nav: {topic: "cmd_vel/nav", priority: 10, timeout: 0.5}
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: true           # keep the curvature when one axis is limited
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.5, 0.0, 0.8]    # below the driver hard caps (0.55 / 0.9)
+    min_velocity: [-0.25, 0.0, -0.8] # reverse slowly: no sensor looks backwards
+    max_accel: [0.3, 0.0, 1.0]       # soft start
+    max_decel: [-0.5, 0.0, -1.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel_safe"
+    transform_tolerance: 0.3
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 1.0
+    polygons: ["FootprintApproach", "PolygonStop", "PolygonSlow"]
+    # Simulates the current command (including in-place rotation) with the real body polygon
+    # and slows/stops so that no corner hits anything within the time horizon.
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "footprint"
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      max_points: 3
+      visualize: false
+      enabled: true
+    # Hard stop: body + 10 cm in front, 5 cm elsewhere.
+    PolygonStop:
+      type: "polygon"
+      points: [0.655, 0.33, -0.115, 0.33, -0.115, -0.33, 0.655, -0.33]
+      action_type: "stop"
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
+      enabled: true
+    # Slow zone ahead of the robot.
+    PolygonSlow:
+      type: "polygon"
+      points: [1.2, 0.45, -0.2, 0.45, -0.2, -0.45, 1.2, -0.45]
+      action_type: "slowdown"
+      slowdown_ratio: 0.4
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_slowdown"
+      enabled: true
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "scan"
+      enabled: true
+
+lifecycle_manager_safety:
+  ros__parameters:
+    autostart: true
+    node_names: ["velocity_smoother", "collision_monitor"]
+    bond_timeout: 4.0

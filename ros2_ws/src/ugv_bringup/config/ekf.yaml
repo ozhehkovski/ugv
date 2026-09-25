@@ -1,0 +1,51 @@
+# robot_localization EKF — сливает КОЛЁСНУЮ одометрию Dual VESC (vx) с курсом BNO085 (yaw+vyaw).
+# Выход: TF odom→base_footprint + /odometry/filtered (её потребляют slam_toolbox и Nav2).
+# Теперь есть настоящие «энкодеры» — тахометры VESC (/odom из vesc_diff_drive): поступательная
+# скорость с колёс (точнее и без дрейфа vs лидарная rf2o), курс/поворот — с IMU (skid-steer вертится
+# со слипом → колёсному yaw не верим, якорим по BNO085). rf2o заменена; доступна для сверки при
+# калибровке (localization.launch use_laser_odom:=true → /odom_rf2o, в фьюзию НЕ входит).
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true               # плоский робот: z, roll, pitch = 0
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    print_diagnostics: true
+    debug: false
+    publish_tf: true
+    publish_acceleration: false
+    reset_on_time_jump: true
+    predict_to_current_time: true
+
+    map_frame: map                 # slam_toolbox даёт map→odom
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom              # EKF работает в odom (локальная гладкая поза)
+
+    # --- Колёсная одометрия VESC: берём ТОЛЬКО vx (её сильная сторона) ---
+    # vyaw с колёс НЕ фьюзим: skid-steer вертится со слипом → курс/поворот якорим по IMU.
+    # порядок осей: x y z  roll pitch yaw  vx vy vz  vroll vpitch vyaw  ax ay az
+    odom0: odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+    odom0_nodelay: true
+
+    # --- BNO085: абсолютный yaw + угловая скорость (якорь курса) ---
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: true            # обнулить стартовый курс (нет магнитометра/абс. севера)
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true
+    imu0_nodelay: true

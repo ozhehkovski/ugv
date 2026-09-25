@@ -1,0 +1,64 @@
+# Stage 3 (mapping) will rework this; carried over from the old stack as a baseline.
+# slam_toolbox — online async SLAM (живое построение карты + loop closure, как на гифках).
+# Потребляет /scan + TF odom→base_footprint (от EKF), публикует map→odom + /map.
+slam_toolbox:
+  ros__parameters:
+    # --- ROS интерфейсы ---
+    use_sim_time: false
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+    mode: mapping                  # строим карту (localization — для готовой карты)
+
+    # --- сохранение/загрузка карты (для режима локализации позже) ---
+    # map_file_name: /path/to/map   # раскомментировать в режиме localization
+    # map_start_at_dock: true
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02 # 50 Гц map→odom
+    map_update_interval: 1.0       # перестроение /map раз в секунду (живая карта)
+    resolution: 0.05               # 5 см/ячейка
+    min_laser_range: 0.2           # RPLIDAR A1 minimum
+    max_laser_range: 12.0          # RPLIDAR A1 ~12 м
+    minimum_time_interval: 0.2
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+
+    # --- general ---
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.2   # копить скан каждые 20 см пути
+    minimum_travel_heading: 0.2    # или 0.2 рад поворота
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 12.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true          # закрытие петель — карта «сходится» при возврате
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # --- correlation (грубое сопоставление) ---
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # --- loop closure correlation ---
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # --- scan matcher ---
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

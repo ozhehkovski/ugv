@@ -1,0 +1,55 @@
+# Single source of truth for UGV geometry and drivetrain.
+# URDF/TF, collision footprint, camera intrinsics and the VESC driver all read this file.
+#
+# Frames (REP-103): base_footprint = floor point under the CENTER OF THE DRIVE AXLE
+# (rotation center for tank turns). x forward, y left, z up. Units: m, rad.
+# Sensor z values are heights ABOVE THE FLOOR (measure with a tape).
+
+chassis:
+  length: 0.62              # nose → tail
+  width: 0.56               # overall, including drive wheels
+  height: 0.16              # floor → top of wheels / deck
+  axle_from_front: 0.555    # nose → drive axle center (axle is 6.5 cm from the tail)
+  footprint_padding: 0.03   # safety margin added around the body for collision checks
+
+wheels:
+  radius: 0.0825            # Ø165 mm hub motors
+  width: 0.045
+  track: 0.515              # wheel center ↔ wheel center. CALIBRATE with a 360° spin test
+  # front: two passive swivel casters (not modeled in kinematics)
+
+sensors:
+  lidar:                    # RPLIDAR A1M8, centered, 12 cm behind the nose, mounted rotated 180°
+    xyz: [0.435, 0.0, 0.195]      # CALIBRATE z
+    rpy: [0.0, 0.0, 3.14159265]
+  camera:                   # USB camera on the nose, looking forward
+    xyz: [0.555, 0.0, 0.11]       # CALIBRATE z / pitch
+    rpy: [0.0, 0.0, 0.0]
+    hfov_deg: 70.0                # CALIBRATE
+    width: 1280
+    height: 720
+  imu:                      # BNO085 on the Jetson case, next to the lidar
+    xyz: [0.40, 0.0, 0.10]        # CALIBRATE z
+    rpy: [0.0, 0.0, 0.0]
+
+drivetrain:
+  # VESC Duet XS100 (FW 7.00): one USB for both channels.
+  # Local channel answers directly, the other one is reached via COMM_FORWARD_CAN.
+  port: /dev/serial/by-id/usb-STMicroelectronics_ChibiOS_RT_Virtual_COM_Port_304-if00
+  pole_pairs: 20            # 120 tacho counts per wheel revolution (verified on bench 2026-09-25)
+  gear_ratio: 1.0
+  left:  {vesc_id: 66, invert: false}   # bench-verified: id66 = left, + = forward
+  right: {vesc_id: 65, invert: false}   # bench-verified: id65 = right, + = forward
+  rate_hz: 30.0             # forward-CAN round trip limits the loop rate
+  cmd_timeout: 0.3          # s without cmd_vel → ramp to stop
+  telemetry_timeout: 0.5    # s without VESC telemetry → fault
+  brake_current: 1.5        # A, used to stop the wheels when the target is zero
+
+# HARD limits enforced inside the driver, independent of any upper layer.
+limits:
+  max_linear: 0.55          # m/s  (2 km/h)
+  max_angular: 0.9          # rad/s (nose corner sweeps ~0.62 m radius → ≈0.56 m/s)
+  max_wheel_speed: 0.55     # m/s per wheel
+  linear_accel: 0.3         # m/s²  soft start
+  linear_decel: 1.0         # m/s²  stop reserve (the smoother decelerates gently before this)
+  angular_accel: 1.5        # rad/s²

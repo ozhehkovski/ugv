@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<!--
+  UGV follow-me cart. All geometry comes from config/robot.yaml.
+  TF: base_footprint (floor, under drive-axle center) → base_link → {chassis, laser, camera_link, imu_link, wheels}
+-->
+<robot name="ugv" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="prefix" default=""/>
+  <xacro:property name="p" value="$(arg prefix)"/>
+
+  <xacro:property name="robot_yaml" value="$(find ugv_description)/config/robot.yaml"/>
+  <xacro:property name="cfg" value="${xacro.load_yaml(robot_yaml)}"/>
+
+  <xacro:property name="body_len" value="${cfg['chassis']['length']}"/>
+  <xacro:property name="body_wid" value="${cfg['chassis']['width']}"/>
+  <xacro:property name="body_hgt" value="${cfg['chassis']['height']}"/>
+  <xacro:property name="axle_x" value="${cfg['chassis']['axle_from_front']}"/>
+  <xacro:property name="wheel_r" value="${cfg['wheels']['radius']}"/>
+  <xacro:property name="wheel_w" value="${cfg['wheels']['width']}"/>
+  <xacro:property name="track" value="${cfg['wheels']['track']}"/>
+  <xacro:property name="lidar" value="${cfg['sensors']['lidar']}"/>
+  <xacro:property name="cam" value="${cfg['sensors']['camera']}"/>
+  <xacro:property name="imu" value="${cfg['sensors']['imu']}"/>
+
+  <!-- base_link sits at axle height; sensor z (above floor) is converted by subtracting base_z -->
+  <xacro:property name="base_z" value="${wheel_r}"/>
+  <!-- chassis box center relative to the axle -->
+  <xacro:property name="body_cx" value="${axle_x - body_len / 2}"/>
+  <xacro:property name="body_h" value="0.04"/>
+
+  <material name="wood"><color rgba="0.8 0.65 0.45 1.0"/></material>
+  <material name="black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="green"><color rgba="0.1 0.7 0.2 1.0"/></material>
+  <material name="blue"><color rgba="0.1 0.3 0.8 1.0"/></material>
+
+  <link name="${p}base_footprint"/>
+
+  <link name="${p}base_link"/>
+  <joint name="${p}base_joint" type="fixed">
+    <parent link="${p}base_footprint"/>
+    <child link="${p}base_link"/>
+    <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${p}chassis">
+    <visual>
+      <geometry><box size="${body_len} ${body_wid - 2 * wheel_w} ${body_h}"/></geometry>
+      <material name="wood"/>
+    </visual>
+    <collision>
+      <geometry><box size="${body_len} ${body_wid} ${body_hgt}"/></geometry>
+    </collision>
+  </link>
+  <joint name="${p}chassis_joint" type="fixed">
+    <parent link="${p}base_link"/>
+    <child link="${p}chassis"/>
+    <origin xyz="${body_cx} 0 ${body_hgt - base_z - body_h / 2}" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="drive_wheel" params="name y">
+    <link name="${p}${name}">
+      <visual>
+        <origin rpy="${pi / 2} 0 0"/>
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+        <material name="black"/>
+      </visual>
+    </link>
+    <joint name="${p}${name}_joint" type="fixed">
+      <parent link="${p}base_link"/>
+      <child link="${p}${name}"/>
+      <origin xyz="0 ${y} 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:drive_wheel name="wheel_left" y="${track / 2}"/>
+  <xacro:drive_wheel name="wheel_right" y="${-track / 2}"/>
+
+  <link name="${p}laser">
+    <visual><geometry><cylinder radius="0.035" length="0.04"/></geometry><material name="black"/></visual>
+  </link>
+  <joint name="${p}laser_joint" type="fixed">
+    <parent link="${p}base_link"/>
+    <child link="${p}laser"/>
+    <origin xyz="${lidar['xyz'][0]} ${lidar['xyz'][1]} ${lidar['xyz'][2] - base_z}"
+            rpy="${lidar['rpy'][0]} ${lidar['rpy'][1]} ${lidar['rpy'][2]}"/>
+  </joint>
+
+  <link name="${p}camera_link">
+    <visual><geometry><box size="0.03 0.03 0.03"/></geometry><material name="green"/></visual>
+  </link>
+  <joint name="${p}camera_joint" type="fixed">
+    <parent link="${p}base_link"/>
+    <child link="${p}camera_link"/>
+    <origin xyz="${cam['xyz'][0]} ${cam['xyz'][1]} ${cam['xyz'][2] - base_z}"
+            rpy="${cam['rpy'][0]} ${cam['rpy'][1]} ${cam['rpy'][2]}"/>
+  </joint>
+  <!-- REP-103 optical frame: z forward, x right, y down -->
+  <link name="${p}camera_optical_frame"/>
+  <joint name="${p}camera_optical_joint" type="fixed">
+    <parent link="${p}camera_link"/>
+    <child link="${p}camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi / 2} 0 ${-pi / 2}"/>
+  </joint>
+
+  <link name="${p}imu_link">
+    <visual><geometry><box size="0.02 0.02 0.005"/></geometry><material name="blue"/></visual>
+  </link>
+  <joint name="${p}imu_joint" type="fixed">
+    <parent link="${p}base_link"/>
+    <child link="${p}imu_link"/>
+    <origin xyz="${imu['xyz'][0]} ${imu['xyz'][1]} ${imu['xyz'][2] - base_z}"
+            rpy="${imu['rpy'][0]} ${imu['rpy'][1]} ${imu['rpy'][2]}"/>
+  </joint>
+</robot>
