@@ -20,7 +20,8 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool
 
 from . import vesc_protocol as vp
@@ -34,6 +35,7 @@ from .diff_drive import (
     meters_per_tach,
 )
 from .estop import EstopLatch
+from .heading_hold import HeadingHold
 from .robot_config import load_robot_config
 
 STOPPED_MPS = 0.03  # below this a wheel counts as stopped (release the brake)
@@ -78,6 +80,15 @@ class VescDriver(Node):
         self.telemetry_timeout = float(dt_cfg["telemetry_timeout"])
         self.brake_current = float(dt_cfg["brake_current"])
         self.min_wheel_speed = float(dt_cfg.get("min_wheel_speed", 0.0))
+        hh = dt_cfg.get("heading_hold", {})
+        self.heading_hold_on = bool(hh.get("enabled", False))
+        self.imu_timeout = float(hh.get("imu_timeout", 0.2))
+        self.heading_hold = HeadingHold(
+            k_rate=float(hh.get("k_rate", 0.5)), k_heading=float(hh.get("k_heading", 2.0)),
+            max_correction=float(hh.get("max_correction", 0.3)),
+            max_heading_error=float(hh.get("max_heading_error", 0.35)))
+        self._gyro_z = 0.0
+        self._gyro_t = -math.inf
         self.limits = DriveLimits.from_config(cfg["limits"])
         self.limiter = VelocityLimiter(self.limits)
         self.odom = Odometry2D(self.track)
@@ -97,6 +108,7 @@ class VescDriver(Node):
         self.odom_pub = self.create_publisher(Odometry, "odom", 10)
         self.diag_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
         self.create_subscription(Twist, "cmd_vel", self._on_cmd, 10)
+        self.create_subscription(Imu, "imu/data", self._on_imu, qos_profile_sensor_data)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(Bool, "estop", self._on_estop, latched)
         self.create_timer(1.0, self._publish_diagnostics)
@@ -114,6 +126,10 @@ class VescDriver(Node):
         with self._lock:
             self._cmd_v, self._cmd_w = float(msg.linear.x), float(msg.angular.z)
             self._cmd_t = time.monotonic()
+
+    def _on_imu(self, msg: Imu) -> None:
+        with self._lock:
+            self._gyro_z, self._gyro_t = float(msg.angular_velocity.z), time.monotonic()
 
     def _on_estop(self, msg: Bool) -> None:
         with self._lock:
@@ -219,15 +235,21 @@ class VescDriver(Node):
             v_t, w_t = (0.0, 0.0) if stale else (self._cmd_v, self._cmd_w)
             allowed = self._estop.allow(v_t, w_t, stale)
             latch_state = self._estop.state
+            gyro_z, gyro_fresh = self._gyro_z, now - self._gyro_t < self.imu_timeout
         telemetry_ok = all(now - s.values_t < self.telemetry_timeout for s in (self.left, self.right))
         if not allowed or not telemetry_ok:
             self._state = latch_state if not allowed else "telemetry_lost"
             self.limiter.reset()
+            self.heading_hold.reset()
             for side in (self.left, self.right):
                 self._brake(side)
             return
         self._state = "ok"
         v, w = self.limiter.step(v_t, w_t, dt)
+        # swinging casters push the robot off course: hold the commanded yaw rate on the gyro
+        moving_cmd = abs(v_t) > 1e-3 or abs(w_t) > 1e-3
+        hold_on = self.heading_hold_on and gyro_fresh and moving_cmd
+        w += self.heading_hold.update(w, gyro_z, dt, hold_on)
         wl, wr = body_to_wheels(v, w, self.track, self.limits.max_wheel_speed)
         if abs(v_t) > 1e-3 or abs(w_t) > 1e-3:      # only while a motion is requested, never when stopping
             wl, wr = apply_min_wheel_speed(wl, wr, self.min_wheel_speed)
@@ -302,6 +324,7 @@ class VescDriver(Node):
                 KeyValue(key=f"{side.name}.temp_fet", value=f"{val.temp_fet:.1f}"),
                 KeyValue(key=f"{side.name}.fault", value=str(val.fault)),
             ])
+        status.values.append(KeyValue(key="heading_error_deg", value=f"{math.degrees(self.heading_hold.heading_error):.1f}"))
         arr = DiagnosticArray()
         arr.header.stamp = self.get_clock().now().to_msg()
         arr.status.append(status)

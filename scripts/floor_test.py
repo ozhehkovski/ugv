@@ -18,7 +18,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformException, TransformListener
 
@@ -40,9 +40,11 @@ class Tester:
         self.v = self.w = 0.0
         self.pts: list[tuple[float, float]] = []
         self.cmd_out = (0.0, 0.0)
+        self.gyro_z = math.nan
         self.n.create_subscription(Odometry, "/odom", self._odom, 10)
         self.n.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.n.create_subscription(Twist, "/cmd_vel_safe", lambda m: setattr(self, "cmd_out", (m.linear.x, m.angular.z)), 10)
+        self.n.create_subscription(Imu, "/imu/data", lambda m: setattr(self, "gyro_z", m.angular_velocity.z), 20)
         self.pub = self.n.create_publisher(Twist, "/cmd_vel/teleop", 10)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.estop = self.n.create_publisher(Bool, "/estop", latched)
@@ -97,12 +99,13 @@ class Tester:
         return math.hypot(self.pose[0] - p0[0], self.pose[1] - p0[1])
 
     def log(self, t: float, extra: str = "") -> None:
-        print(f"t={t:5.2f} v={self.v:+.3f} w={self.w:+.3f} cmd_safe=({self.cmd_out[0]:+.2f},{self.cmd_out[1]:+.2f}) "
+        print(f"t={t:5.2f} v={self.v:+.3f} w={self.w:+.3f} gyro={self.gyro_z:+.3f} cmd_safe=({self.cmd_out[0]:+.2f},{self.cmd_out[1]:+.2f}) "
               f"front_gap={self.front_gap():.2f} nearest={self.sweep_min():.2f} {extra}", flush=True)
 
     # ---------------------------------------------------------------- tests
     def brake(self, v: float, run_m: float, use_estop: bool) -> None:
         p0, t0, nxt = self.pose, time.monotonic(), 0.0
+        th0 = self.pose[2]
         print(f"BRAKE v={v} run={run_m} m, start front_gap={self.front_gap():.2f}")
         while self.dist_from(p0) < run_m:
             t = time.monotonic() - t0
@@ -126,6 +129,9 @@ class Tester:
         print(f"RESULT {'estop' if use_estop else 'release'}: speed at stop cmd {v_at:.3f} m/s → "
               f"stopping distance {self.dist_from(p_stop) * 100:.1f} cm in {dt:.2f} s; "
               f"total run {self.dist_from(p0):.2f} m; front_gap now {self.front_gap():.2f} m")
+        dth = math.degrees(math.atan2(math.sin(self.pose[2] - th0), math.cos(self.pose[2] - th0)))
+        lateral = -math.sin(th0) * (self.pose[0] - p0[0]) + math.cos(th0) * (self.pose[1] - p0[1])
+        print(f"HEADING drift {dth:+.1f}° (wheel odom), lateral offset {lateral * 100:+.1f} cm")
         if use_estop:
             self.estop.publish(Bool(data=False))
             self.spin(0.5)

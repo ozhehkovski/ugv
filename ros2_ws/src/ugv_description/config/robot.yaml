@@ -46,6 +46,13 @@ drivetrain:
   brake_current: 1.5        # A, used to stop the wheels when the target is zero
   min_wheel_speed: 0.06     # m/s: on the floor the wheels stall below ~0.04 (≈95 ERPM); slower
                             # non-zero commands are lifted to this (curvature kept)
+  heading_hold:             # gyro yaw-rate PI: the front casters swing and push the robot off course
+    enabled: true
+    k_rate: 0.5             # rad/s correction per rad/s of yaw-rate error
+    k_heading: 2.0          # rad/s correction per rad of accumulated heading error
+    max_correction: 0.3     # rad/s
+    max_heading_error: 0.35 # rad (~20°), integral clamp
+    imu_timeout: 0.2        # s: stale IMU → open loop
 
 # HARD limits enforced inside the driver, independent of any upper layer.
 limits:

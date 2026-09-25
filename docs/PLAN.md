@@ -28,6 +28,8 @@
 - [x] Slow zone only ahead of the nose. Side obstacles are handled by the approach check, which knows the turn direction.
 - [x] After estop release, require a zero command before moving again.
 - [x] Web panel (map + lidar + footprint, camera, status, joystick with dead-man, big STOP).
+- [x] Heading hold: gyro yaw-rate PI in the driver. The front casters swing and push the robot off course. Gyro sign verified (+z = CCW).
+- [ ] Verify heading hold on a 1.5 m straight run: drift < 2°.
 - [ ] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
   - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
   - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
