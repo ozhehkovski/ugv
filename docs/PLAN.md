@@ -20,7 +20,8 @@
 ### 1. Drive and safety (in progress)
 - [x] Bench test of the VESC: id65 = right, id66 = left, + = forward on both.
 - [x] Driver with hard caps, soft-start ramp, cmd watchdog, telemetry watchdog, estop and diagnostics.
-- [x] Chain: cmd_mux → velocity_smoother → collision_monitor (approach on the body polygon + stop/slow zones).
+- [x] Chain: cmd_mux → velocity_smoother → safety_governor (own, direction-aware).
+  Nav2 Humble's collision_monitor was replaced: its stop polygon zeroed every command while an obstacle was inside it, so the robot got trapped next to a sofa and could not back away.
 - [x] Bench checks: straight run, tank turn, estop, stop on timeout.
 - [ ] Tune the id66 speed PID in VESC Tool. It oscillates: 39–489 ERPM measured for 300 commanded. id65 is stable.
 - [x] Low-speed stall: on the floor the wheels stall below ~0.04 m/s. The driver lifts slower non-zero commands to `min_wheel_speed` 0.06 m/s, keeping the curvature.

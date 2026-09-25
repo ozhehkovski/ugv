@@ -32,8 +32,9 @@ def generate_launch_description() -> LaunchDescription:
         Node(package="nav2_velocity_smoother", executable="velocity_smoother", name="velocity_smoother",
              output="screen", parameters=[safety],
              remappings=[("cmd_vel", "cmd_vel_mux"), ("cmd_vel_smoothed", "cmd_vel_smoothed")]),
-        Node(package="nav2_collision_monitor", executable="collision_monitor", name="collision_monitor",
-             output="screen", parameters=[safety]),
+        Node(package="ugv_drivers", executable="safety_governor", name="safety_governor", output="screen",
+             parameters=[safety],
+             remappings=[("cmd_vel_in", "cmd_vel_smoothed"), ("cmd_vel_out", "cmd_vel_safe")]),
         Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="lifecycle_manager_safety",
              output="screen", parameters=[safety]),
     ])

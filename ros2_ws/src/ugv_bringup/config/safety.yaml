@@ -1,6 +1,6 @@
 # Velocity safety chain:
 #   cmd_vel/{teleop,follow,nav} → cmd_mux → cmd_vel_mux → velocity_smoother → cmd_vel_smoothed
-#   → collision_monitor → cmd_vel_safe → vesc_driver (hard limits + ramp + watchdog, see robot.yaml)
+#   → safety_governor → cmd_vel_safe → vesc_driver (hard limits + ramp + watchdog, see robot.yaml)
 #
 # Chassis (base_footprint = drive-axle center): x ∈ [-0.065, 0.555], y ∈ [-0.28, 0.28].
 # Tank-turn sweep radius of the nose corners ≈ 0.62 m.
@@ -27,57 +27,18 @@ velocity_smoother:
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
 
-collision_monitor:
+# Direction-aware collision governor (ugv_drivers/safety_governor.py). Replaces Nav2 Humble's
+# collision_monitor: its stop polygon zeroed EVERY command while a point was inside it, which
+# trapped the robot next to a sofa (it could not even back away). The governor simulates the body
+# along the commanded arc and only limits motion that closes in on an obstacle.
+safety_governor:
   ros__parameters:
-    base_frame_id: "base_footprint"
-    odom_frame_id: "odom"
-    cmd_vel_in_topic: "cmd_vel_smoothed"
-    cmd_vel_out_topic: "cmd_vel_safe"
-    transform_tolerance: 0.3
-    source_timeout: 1.0
-    base_shift_correction: true
-    stop_pub_timeout: 1.0
-    polygons: ["FootprintApproach", "PolygonStop", "PolygonSlow"]
-    # Simulates the current command (including in-place rotation) with the real body polygon
-    # and slows/stops so that no corner hits anything within the time horizon.
-    FootprintApproach:
-      type: "polygon"
-      action_type: "approach"
-      footprint_topic: "footprint"
-      time_before_collision: 1.5
-      simulation_time_step: 0.1
-      max_points: 3
-      visualize: false
-      enabled: true
-    # Hard stop: body + 10 cm in front, 5 cm elsewhere.
-    PolygonStop:
-      type: "polygon"
-      points: [0.655, 0.33, -0.115, 0.33, -0.115, -0.33, 0.655, -0.33]
-      action_type: "stop"
-      max_points: 3
-      visualize: true
-      polygon_pub_topic: "polygon_stop"
-      enabled: true
-    # Slow zone AHEAD of the nose only. Side obstacles are handled by FootprintApproach, which
-    # knows whether a turn moves a corner toward them (a wall beside the robot must not slow a
-    # turn away from it).
-    PolygonSlow:
-      type: "polygon"
-      points: [1.2, 0.40, 0.555, 0.40, 0.555, -0.40, 1.2, -0.40]
-      action_type: "slowdown"
-      slowdown_ratio: 0.4
-      max_points: 3
-      visualize: true
-      polygon_pub_topic: "polygon_slowdown"
-      enabled: true
-    observation_sources: ["scan"]
-    scan:
-      type: "scan"
-      topic: "scan"
-      enabled: true
+    stop_margin: 0.05      # m, minimum clearance between the body and any lidar point
+    horizon: 1.5           # s, look-ahead; the command scales with time-to-violation / horizon
+    scan_timeout: 0.5      # s, no fresh scan → zero command
 
 lifecycle_manager_safety:
   ros__parameters:
     autostart: true
-    node_names: ["velocity_smoother", "collision_monitor"]
+    node_names: ["velocity_smoother"]
     bond_timeout: 4.0

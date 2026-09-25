@@ -25,6 +25,7 @@ setup(
             "camera = ugv_drivers.camera_node:main",
             "cmd_mux = ugv_drivers.cmd_mux_node:main",
             "footprint_publisher = ugv_drivers.footprint_node:main",
+            "safety_governor = ugv_drivers.safety_governor_node:main",
         ],
     },
 )

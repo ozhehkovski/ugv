@@ -173,9 +173,12 @@ function render() {
   chip("cBatt", isNaN(v) ? "bad" : v < 25 ? "warn" : "ok", "батарея <b>" + (isNaN(v) ? "—" : v.toFixed(1) + " В") + "</b>");
   chip("cSrc", s.source === "none" ? "" : "ok", "источник <b>" + s.source + "</b>");
   chip("cSpeed", "", "скорость <b>" + (s.odom.v * 3.6).toFixed(1) + " км/ч</b> · " + s.odom.w.toFixed(2) + " рад/с");
-  const limiting = s.cmd_out_age !== null && s.cmd_out_age < 0.5 &&
-    (Math.abs(s.cmd_out.v) + 1e-3 < Math.abs(s.cmd_in.v) || Math.abs(s.cmd_out.w) + 1e-3 < Math.abs(s.cmd_in.w));
-  chip("cSafe", limiting ? "warn" : "ok", limiting ? "<b>препятствие: замедляю</b>" : "защита ok");
+  const [reason, clr] = (s.safety || "").split(" ");
+  const clrTxt = clr && clr.startsWith("clearance=") && clr.slice(10) !== "inf" ? " · зазор " + Math.round(parseFloat(clr.slice(10)) * 100) + " см" : "";
+  const SAFETY = { ok: ["ok", "защита ok"], idle: ["ok", "защита ok"], slow: ["warn", "<b>препятствие: замедляю</b>"],
+    blocked: ["bad", "<b>препятствие: стою</b> (можно отъехать)"], no_scan: ["bad", "<b>нет лидара: движение запрещено</b>"] };
+  const [cls, txt] = SAFETY[reason] || ["", "защита …"];
+  chip("cSafe", cls, txt + clrTxt);
   const la = s.scan_age;
   chip("cLidar", la === null || la > 1 ? "bad" : "ok", "лидар " + (la === null ? "<b>нет</b>" : la > 1 ? "<b>устарел</b>" : "ok"));
   const camOk = s.camera_age !== null && s.camera_age < 2;

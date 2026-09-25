@@ -73,6 +73,7 @@ class WebUi(Node):
         self.cmd_out = (0.0, 0.0)
         self.cmd_out_t = 0.0
         self.source = "none"
+        self.safety = "нет данных"
         self.estop = False
         self.drive: dict[str, Any] = {"level": None, "message": "нет данных", "values": {}}
         self.drive_t = 0.0
@@ -89,6 +90,7 @@ class WebUi(Node):
         self.create_subscription(Twist, "cmd_vel_mux", self._on_cmd_in, 10)
         self.create_subscription(Twist, "cmd_vel_safe", self._on_cmd_out, 10)
         self.create_subscription(String, "cmd_vel_source", self._on_source, 10)
+        self.create_subscription(String, "safety_status", self._on_safety, 10)
         self.create_subscription(Bool, "estop", self._on_estop, LATCHED)
         self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diag, 10)
         self.create_timer(0.05, self._teleop_tick)
@@ -159,6 +161,10 @@ class WebUi(Node):
         with self.lock:
             self.source = msg.data
 
+    def _on_safety(self, msg: String) -> None:
+        with self.lock:
+            self.safety = msg.data
+
     def _on_estop(self, msg: Bool) -> None:
         with self.lock:
             self.estop = bool(msg.data)
@@ -208,6 +214,7 @@ class WebUi(Node):
             return {
                 "estop": self.estop,
                 "source": self.source,
+                "safety": self.safety,
                 "drive": self.drive,
                 "drive_age": round(now - self.drive_t, 2) if self.drive_t else None,
                 "pose": self.pose,

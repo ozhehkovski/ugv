@@ -24,9 +24,11 @@ All geometry lives in [`robot.yaml`](ros2_ws/src/ugv_description/config/robot.ya
 
 ```
 cmd_vel/teleop (prio 100) ┐
-cmd_vel/follow (prio 50)  ├─ cmd_mux → velocity_smoother → collision_monitor → cmd_vel_safe → vesc_driver
-cmd_vel/nav    (prio 10)  ┘   (timeouts)   (soft accel)      (body polygon, turn sweep)    (hard caps, ramp, watchdog, estop)
+cmd_vel/follow (prio 50)  ├─ cmd_mux → velocity_smoother → safety_governor → cmd_vel_safe → vesc_driver
+cmd_vel/nav    (prio 10)  ┘   (timeouts)   (soft accel)      (body along the arc, 5 cm)  (hard caps, ramp, watchdog, estop)
 ```
+
+`safety_governor` simulates the body rectangle along the commanded arc for 1.5 s. It scales the command by the time left until the clearance would drop below 5 cm. It only limits motion that closes in, so backing away or turning away from a wall always works. With no fresh scan it outputs zero.
 
 The driver enforces the hard limits on its own: 0.55 m/s (2 km/h), 0.9 rad/s and 0.3 m/s² acceleration. If `cmd_vel` is silent for more than 0.3 s, or VESC telemetry is lost, it stops the wheels.
 
