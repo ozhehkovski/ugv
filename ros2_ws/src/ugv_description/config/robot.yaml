@@ -44,6 +44,8 @@ drivetrain:
   cmd_timeout: 0.3          # s without cmd_vel → ramp to stop
   telemetry_timeout: 0.5    # s without VESC telemetry → fault
   brake_current: 1.5        # A, used to stop the wheels when the target is zero
+  min_wheel_speed: 0.06     # m/s: on the floor the wheels stall below ~0.04 (≈95 ERPM); slower
+                            # non-zero commands are lifted to this (curvature kept)
 
 # HARD limits enforced inside the driver, independent of any upper layer.
 limits:

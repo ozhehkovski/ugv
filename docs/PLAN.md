@@ -23,10 +23,16 @@
 - [x] Chain: cmd_mux → velocity_smoother → collision_monitor (approach on the body polygon + stop/slow zones).
 - [x] Bench checks: straight run, tank turn, estop, stop on timeout.
 - [ ] Tune the id66 speed PID in VESC Tool. It oscillates: 39–489 ERPM measured for 300 commanded. id65 is stable.
-- [ ] Low-speed deadband: below about 60 ERPM (0.026 m/s per wheel) the wheels do not move.
+- [x] Low-speed stall: on the floor the wheels stall below ~0.04 m/s. The driver lifts slower non-zero commands to `min_wheel_speed` 0.06 m/s, keeping the curvature.
+- [x] Slow zone only ahead of the nose. Side obstacles are handled by the approach check, which knows the turn direction.
 - [x] After estop release, require a zero command before moving again.
 - [x] Web panel (map + lidar + footprint, camera, status, joystick with dead-man, big STOP).
 - [ ] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
+  - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
+  - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
+    After the fixes it turned 21° and stopped 4–5 cm from an obstacle (a leg). No contact.
+  - TODO: braking from 0.3/0.5 m/s in open space (≥2.5 m); approach toward a wall/box; turn with a wall 10–20 cm off the side.
+  - TODO: people need a larger margin than furniture. The stop zone ahead is 10 cm, which is fine for walls but not for feet.
 - [ ] Measure the real track width (center to center) and check it with a 360° spin.
 
 ### 2. Localization

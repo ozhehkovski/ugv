@@ -24,7 +24,15 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
 from . import vesc_protocol as vp
-from .diff_drive import DriveLimits, Odometry2D, VelocityLimiter, body_to_wheels, erpm_per_mps, meters_per_tach
+from .diff_drive import (
+    DriveLimits,
+    Odometry2D,
+    VelocityLimiter,
+    apply_min_wheel_speed,
+    body_to_wheels,
+    erpm_per_mps,
+    meters_per_tach,
+)
 from .estop import EstopLatch
 from .robot_config import load_robot_config
 
@@ -69,6 +77,7 @@ class VescDriver(Node):
         self.cmd_timeout = float(dt_cfg["cmd_timeout"])
         self.telemetry_timeout = float(dt_cfg["telemetry_timeout"])
         self.brake_current = float(dt_cfg["brake_current"])
+        self.min_wheel_speed = float(dt_cfg.get("min_wheel_speed", 0.0))
         self.limits = DriveLimits.from_config(cfg["limits"])
         self.limiter = VelocityLimiter(self.limits)
         self.odom = Odometry2D(self.track)
@@ -220,6 +229,8 @@ class VescDriver(Node):
         self._state = "ok"
         v, w = self.limiter.step(v_t, w_t, dt)
         wl, wr = body_to_wheels(v, w, self.track, self.limits.max_wheel_speed)
+        if abs(v_t) > 1e-3 or abs(w_t) > 1e-3:      # only while a motion is requested, never when stopping
+            wl, wr = apply_min_wheel_speed(wl, wr, self.min_wheel_speed)
         for side, speed in ((self.left, wl), (self.right, wr)):
             if abs(speed) < 1e-3:
                 self._brake(side)

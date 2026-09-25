@@ -58,10 +58,12 @@ collision_monitor:
       visualize: true
       polygon_pub_topic: "polygon_stop"
       enabled: true
-    # Slow zone ahead of the robot.
+    # Slow zone AHEAD of the nose only. Side obstacles are handled by FootprintApproach, which
+    # knows whether a turn moves a corner toward them (a wall beside the robot must not slow a
+    # turn away from it).
     PolygonSlow:
       type: "polygon"
-      points: [1.2, 0.45, -0.2, 0.45, -0.2, -0.45, 1.2, -0.45]
+      points: [1.2, 0.40, 0.555, 0.40, 0.555, -0.40, 1.2, -0.40]
       action_type: "slowdown"
       slowdown_ratio: 0.4
       max_points: 3

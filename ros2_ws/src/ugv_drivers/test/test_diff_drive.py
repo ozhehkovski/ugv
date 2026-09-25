@@ -3,6 +3,7 @@ import math
 import pytest
 
 from ugv_drivers.diff_drive import (
+    apply_min_wheel_speed,
     DriveLimits,
     Odometry2D,
     VelocityLimiter,
@@ -73,3 +74,15 @@ def test_odometry_straight_and_spin() -> None:
     odo.update(-quarter, quarter)
     assert odo.theta == pytest.approx(math.pi / 2)
     assert odo.x == pytest.approx(1.0)
+
+
+def test_min_wheel_speed_lifts_slow_commands_keeping_curvature() -> None:
+    left, right = apply_min_wheel_speed(-0.02, 0.02, 0.06)      # slow tank turn
+    assert (left, right) == pytest.approx((-0.06, 0.06))
+    left, right = apply_min_wheel_speed(0.01, 0.03, 0.06)
+    assert (left, right) == pytest.approx((0.02, 0.06))
+
+
+def test_min_wheel_speed_keeps_zero_and_fast_commands() -> None:
+    assert apply_min_wheel_speed(0.0, 0.0, 0.06) == (0.0, 0.0)
+    assert apply_min_wheel_speed(0.1, 0.2, 0.06) == (0.1, 0.2)

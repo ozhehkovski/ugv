@@ -52,6 +52,17 @@ def body_to_wheels(v: float, w: float, track: float, max_wheel_speed: float) -> 
     return left, right
 
 
+def apply_min_wheel_speed(left: float, right: float, min_speed: float) -> tuple[float, float]:
+    """Hub motors stall below ~min_speed on the floor. If the faster wheel is commanded below it
+    (but not zero), scale both wheels up together so the faster one reaches min_speed; the
+    curvature is kept. Zero stays zero, so stopping is never affected."""
+    peak = max(abs(left), abs(right))
+    if peak < 1e-3 or peak >= min_speed or min_speed <= 0.0:
+        return left, right
+    k = min_speed / peak
+    return left * k, right * k
+
+
 class VelocityLimiter:
     """Clamps and ramps body velocity. Keeps state between calls (one per drive)."""
 
