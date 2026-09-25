@@ -25,6 +25,7 @@ from std_msgs.msg import Bool
 
 from . import vesc_protocol as vp
 from .diff_drive import DriveLimits, Odometry2D, VelocityLimiter, body_to_wheels, erpm_per_mps, meters_per_tach
+from .estop import EstopLatch
 from .robot_config import load_robot_config
 
 STOPPED_MPS = 0.03  # below this a wheel counts as stopped (release the brake)
@@ -78,7 +79,7 @@ class VescDriver(Node):
         self._lock = threading.Lock()
         self._cmd_v = self._cmd_w = 0.0
         self._cmd_t = -math.inf
-        self._estop = False
+        self._estop = EstopLatch()
         self._ser: serial.Serial | None = None
         self._decoder = vp.FrameDecoder()
         self._state = "connecting"
@@ -107,8 +108,8 @@ class VescDriver(Node):
 
     def _on_estop(self, msg: Bool) -> None:
         with self._lock:
-            changed = self._estop != bool(msg.data)
-            self._estop = bool(msg.data)
+            changed = self._estop.engaged != bool(msg.data)
+            self._estop.set(bool(msg.data))
         if changed:
             self.get_logger().warn(f"ESTOP {'ENGAGED' if msg.data else 'released'}")
 
@@ -205,12 +206,13 @@ class VescDriver(Node):
 
     def _command(self, now: float, dt: float) -> None:
         with self._lock:
-            estop = self._estop
             stale = now - self._cmd_t > self.cmd_timeout
             v_t, w_t = (0.0, 0.0) if stale else (self._cmd_v, self._cmd_w)
+            allowed = self._estop.allow(v_t, w_t, stale)
+            latch_state = self._estop.state
         telemetry_ok = all(now - s.values_t < self.telemetry_timeout for s in (self.left, self.right))
-        if estop or not telemetry_ok:
-            self._state = "estop" if estop else "telemetry_lost"
+        if not allowed or not telemetry_ok:
+            self._state = latch_state if not allowed else "telemetry_lost"
             self.limiter.reset()
             for side in (self.left, self.right):
                 self._brake(side)
@@ -272,6 +274,8 @@ class VescDriver(Node):
             status.level, status.message = DiagnosticStatus.OK, "ok"
         elif state == "estop":
             status.level, status.message = DiagnosticStatus.WARN, "estop engaged"
+        elif state == "rearm":
+            status.level, status.message = DiagnosticStatus.WARN, "estop released: waiting for a zero command"
         else:
             status.level = DiagnosticStatus.ERROR
             status.message = state if not faults else f"VESC fault on {', '.join(s.name for s in faults)}"

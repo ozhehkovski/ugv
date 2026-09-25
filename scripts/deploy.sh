@@ -8,10 +8,10 @@ HOST="${UGV_HOST:-luki@192.168.1.58}"
 REMOTE_WS="${UGV_WS:-ugv_ws}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-ssh "$HOST" "mkdir -p $REMOTE_WS/src"
-rsync -az --delete --exclude '__pycache__' --exclude '.pytest_cache' \
+${UGV_SSH:-ssh} "$HOST" "mkdir -p $REMOTE_WS/src"
+rsync -e "${UGV_SSH:-ssh}" -az --delete --exclude '__pycache__' --exclude '.pytest_cache' \
   "$ROOT/ros2_ws/src/" "$HOST:$REMOTE_WS/src/"
-rsync -az --delete "$ROOT/scripts/" "$HOST:$REMOTE_WS/scripts/"
+rsync -e "${UGV_SSH:-ssh}" -az --delete "$ROOT/scripts/" "$HOST:$REMOTE_WS/scripts/"
 
-ssh "$HOST" "bash -lc 'set -e; source /opt/ros/humble/setup.bash; cd ~/$REMOTE_WS; \
+${UGV_SSH:-ssh} "$HOST" "bash -lc 'set -e; source /opt/ros/humble/setup.bash; cd ~/$REMOTE_WS; \
   PYTHONNOUSERSITE=1 colcon build --symlink-install $* 2>&1 | tail -20'"

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>UGV пульт</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #181c22; --line: #2a3039; --text: #e6e9ee; --muted: #8b95a3;
+    --ok: #2fbf71; --warn: #f0b429; --bad: #e5484d; --accent: #4c8dff;
+    --stop: #d92d2d; --stop-press: #a81e1e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; overscroll-behavior: none; }
+  header { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  .chip { padding: 3px 8px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+    font-size: 12px; white-space: nowrap; }
+  .chip b { font-weight: 600; }
+  .chip.ok { border-color: var(--ok); } .chip.warn { border-color: var(--warn); color: var(--warn); }
+  .chip.bad { border-color: var(--bad); color: var(--bad); }
+  main { flex: 1; min-height: 0; display: grid; gap: 10px; padding: 10px 12px;
+    grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: minmax(0, 1fr); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; position: relative; }
+  .panel h2 { position: absolute; top: 8px; left: 10px; margin: 0; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .04em; pointer-events: none; z-index: 2; }
+  #mapPanel canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  .mapTools { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px; z-index: 2; }
+  .mapTools button, .ctl button { background: #232932; color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  .mapTools button.on { border-color: var(--accent); color: var(--accent); }
+  .legend { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--muted); z-index: 2; }
+  .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  #camPanel { aspect-ratio: 16 / 9; flex: none; }
+  #cam { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+  #camMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .ctl { padding: 34px 12px 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 250px; }
+  .ctl label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+  .ctl input[type=range] { width: 100%; }
+  #joy { position: relative; align-self: center; width: 190px; height: 190px; border-radius: 50%;
+    background: radial-gradient(circle, #232932 0%, #1b2027 70%); border: 1px solid var(--line); touch-action: none; }
+  #knob { position: absolute; width: 64px; height: 64px; border-radius: 50%; left: 63px; top: 63px;
+    background: var(--accent); opacity: .85; pointer-events: none; }
+  #joy.disabled { opacity: .35; }
+  .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  #stopBar { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
+    display: flex; gap: 10px; background: var(--bg); }
+  #stop { flex: 1; height: 84px; border: 0; border-radius: 14px; background: var(--stop); color: #fff;
+    font-size: 34px; font-weight: 800; letter-spacing: .08em; cursor: pointer; box-shadow: 0 4px 0 var(--stop-press); }
+  #stop:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--stop-press); }
+  #stop.engaged { background: #3a1a1a; color: #ff8a8a; box-shadow: none; font-size: 24px; border: 2px solid var(--stop); }
+  #release { display: none; width: 190px; border-radius: 14px; border: 2px solid var(--warn); background: transparent;
+    color: var(--warn); font-size: 16px; font-weight: 700; cursor: pointer; }
+  #release.show { display: block; }
+  #banner { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 10px; text-align: center;
+    background: var(--bad); color: #fff; font-weight: 700; }
+  #banner.show { display: block; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto; overflow: auto; }
+    #mapPanel { height: 55vh; }
+    .side { min-height: auto; }
+    #stop { height: 72px; font-size: 28px; }
+    #release { width: 130px; font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="banner">НЕТ СВЯЗИ С РОБОТОМ — кнопка СТОП не дойдёт. Используйте физический выключатель.</div>
+<header>
+  <h1>UGV</h1>
+  <span class="chip" id="cConn">связь …</span>
+  <span class="chip" id="cDrive">привод …</span>
+  <span class="chip" id="cBatt">батарея …</span>
+  <span class="chip" id="cSrc">источник …</span>
+  <span class="chip" id="cSpeed">скорость …</span>
+  <span class="chip" id="cSafe">защита …</span>
+  <span class="chip" id="cLidar">лидар …</span>
+</header>
+<main>
+  <section class="panel" id="mapPanel">
+    <h2 id="mapTitle">Карта</h2>
+    <div class="mapTools">
+      <button id="zoomOut" title="Отдалить">−</button>
+      <button id="zoomIn" title="Приблизить">+</button>
+      <button id="follow" class="on" title="Держать робота в центре">За роботом</button>
+    </div>
+    <canvas id="map"></canvas>
+    <div class="legend">зелёный — корпус · пунктир — круг разворота · красное — лидар · сетка 1 м</div>
+  </section>
+  <div class="side">
+    <section class="panel" id="camPanel">
+      <h2>Камера</h2>
+      <img id="cam" alt="">
+      <div id="camMsg">нет видео</div>
+    </section>
+    <section class="panel ctl">
+      <h2>Ручное управление</h2>
+      <label>Макс. скорость <span id="vmaxVal"></span></label>
+      <input id="vmax" type="range" min="0.1" max="0.5" step="0.05" value="0.25">
+      <div id="joy"><div id="knob"></div></div>
+      <div class="hint">Джойстик или W A S D / стрелки. Робот едет, пока держите. Пробел — СТОП.</div>
+    </section>
+  </div>
+</main>
+<div id="stopBar">
+  <button id="stop">СТОП</button>
+  <button id="release">Снять стоп</button>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const W_MAX = 0.8;
+let state = null, lastOk = 0, estop = false;
+
+// ---------------------------------------------------------------- network
+async function post(path, body, timeoutMs = 800) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: ctl.signal });
+    return r.ok;
+  } catch (e) { return false; } finally { clearTimeout(t); }
+}
+
+async function poll() {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 1000);
+  try {
+    const r = await fetch("/api/state", { signal: ctl.signal, cache: "no-store" });
+    if (r.ok) { state = await r.json(); lastOk = performance.now(); estop = state.estop; render(); }
+  } catch (e) { /* connection state is shown by the watchdog below */ }
+  finally { clearTimeout(t); setTimeout(poll, 150); }
+}
+
+setInterval(() => {
+  const lost = performance.now() - lastOk > 1500;
+  $("banner").classList.toggle("show", lost && lastOk > 0);
+  chip("cConn", lost ? "bad" : "ok", lost ? "<b>нет связи</b>" : "связь ok");
+}, 250);
+
+// ---------------------------------------------------------------- STOP
+async function engageStop() {
+  estop = true; stopJoystick(); keys.clear(); updateStopUi();
+  for (let i = 0; i < 5; i++) { if (await post("/api/estop", { engage: true })) return; }
+}
+async function releaseStop() {
+  if (!confirm("Снять аварийный стоп? Робот снова сможет ехать.")) return;
+  await post("/api/estop", { engage: false });
+}
+$("stop").addEventListener("click", engageStop);
+$("stop").addEventListener("touchstart", (e) => { e.preventDefault(); engageStop(); }, { passive: false });
+$("release").addEventListener("click", releaseStop);
+function updateStopUi() {
+  $("stop").classList.toggle("engaged", estop);
+  $("stop").textContent = estop ? "СТОП АКТИВЕН" : "СТОП";
+  $("release").classList.toggle("show", estop);
+  $("joy").classList.toggle("disabled", estop);
+}
+
+// ---------------------------------------------------------------- status
+function chip(id, cls, html) { const el = $(id); el.className = "chip " + (cls || ""); el.innerHTML = html; }
+function render() {
+  const s = state; updateStopUi();
+  const d = s.drive || {}; const vals = d.values || {};
+  const stale = s.drive_age === null || s.drive_age > 3;
+  const lvl = stale ? "bad" : (d.level === 0 ? "ok" : d.level === 1 ? "warn" : "bad");
+  chip("cDrive", lvl, "привод: <b>" + (stale ? "нет данных" : d.message) + "</b>");
+  const v = parseFloat(vals["left.v_in"] || vals["right.v_in"]);
+  chip("cBatt", isNaN(v) ? "bad" : v < 25 ? "warn" : "ok", "батарея <b>" + (isNaN(v) ? "—" : v.toFixed(1) + " В") + "</b>");
+  chip("cSrc", s.source === "none" ? "" : "ok", "источник <b>" + s.source + "</b>");
+  chip("cSpeed", "", "скорость <b>" + (s.odom.v * 3.6).toFixed(1) + " км/ч</b> · " + s.odom.w.toFixed(2) + " рад/с");
+  const limiting = s.cmd_out_age !== null && s.cmd_out_age < 0.5 &&
+    (Math.abs(s.cmd_out.v) + 1e-3 < Math.abs(s.cmd_in.v) || Math.abs(s.cmd_out.w) + 1e-3 < Math.abs(s.cmd_in.w));
+  chip("cSafe", limiting ? "warn" : "ok", limiting ? "<b>препятствие: замедляю</b>" : "защита ok");
+  const la = s.scan_age;
+  chip("cLidar", la === null || la > 1 ? "bad" : "ok", "лидар " + (la === null ? "<b>нет</b>" : la > 1 ? "<b>устарел</b>" : "ok"));
+  const camOk = s.camera_age !== null && s.camera_age < 2;
+  $("camMsg").style.display = camOk ? "none" : "flex";
+  if (camOk && !$("cam").src) $("cam").src = "/camera.mjpg";
+  if (!camOk && $("cam").src) $("cam").removeAttribute("src");
+  $("mapTitle").textContent = s.map ? "Карта · SLAM" : (s.pose_frame === "odom" ? "Одометрия (карты пока нет)" : "Карта");
+  if (s.map && s.map.version !== mapVersion) loadMap(s.map);
+  drawMap();
+}
+
+// ---------------------------------------------------------------- map
+const cv = $("map"), ctx = cv.getContext("2d");
+let scale = 60, center = { x: 0, y: 0 }, followRobot = true, mapImg = null, mapMeta = null, mapVersion = null;
+function loadMap(meta) {
+  mapVersion = meta.version;
+  const img = new Image();
+  img.onload = () => { mapImg = img; mapMeta = meta; drawMap(); };
+  img.src = "/api/map.png?v=" + meta.version;
+}
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, r.width * dpr); cv.height = Math.max(1, r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawMap();
+}
+window.addEventListener("resize", resize);
+function toScreen(x, y) {
+  const r = cv.getBoundingClientRect();
+  return [r.width / 2 + (x - center.x) * scale, r.height / 2 - (y - center.y) * scale];
+}
+function robotPose() { return (state && state.pose) || { x: 0, y: 0, th: 0 }; }
+function drawMap() {
+  const r = cv.getBoundingClientRect();
+  ctx.fillStyle = "#11151a"; ctx.fillRect(0, 0, r.width, r.height);
+  const p = robotPose();
+  if (followRobot) center = { x: p.x, y: p.y };
+  if (mapImg && mapMeta) {
+    const [sx, sy] = toScreen(mapMeta.origin[0], mapMeta.origin[1] + mapMeta.height * mapMeta.resolution);
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(mapImg, sx, sy, mapMeta.width * mapMeta.resolution * scale, mapMeta.height * mapMeta.resolution * scale);
+    ctx.globalAlpha = 1;
+  }
+  // 1 m grid
+  ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1;
+  const x0 = Math.floor(center.x - r.width / 2 / scale), x1 = Math.ceil(center.x + r.width / 2 / scale);
+  const y0 = Math.floor(center.y - r.height / 2 / scale), y1 = Math.ceil(center.y + r.height / 2 / scale);
+  ctx.beginPath();
+  for (let x = x0; x <= x1; x++) { const [a] = toScreen(x, 0); ctx.moveTo(a, 0); ctx.lineTo(a, r.height); }
+  for (let y = y0; y <= y1; y++) { const [, b] = toScreen(0, y); ctx.moveTo(0, b); ctx.lineTo(r.width, b); }
+  ctx.stroke();
+  if (!state) return;
+  const c = Math.cos(p.th), s = Math.sin(p.th);
+  const w = (bx, by) => toScreen(p.x + c * bx - s * by, p.y + s * bx + c * by);
+  // lidar
+  ctx.fillStyle = "#ff4d4f";
+  for (const [bx, by] of state.scan) { const [a, b] = w(bx, by); ctx.fillRect(a - 1.5, b - 1.5, 3, 3); }
+  // turn sweep circle
+  const fp = state.footprint || [];
+  if (fp.length) {
+    const rad = Math.max(...fp.map(([x, y]) => Math.hypot(x, y)));
+    const [cx, cy] = w(0, 0);
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = "rgba(240,180,41,0.55)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, rad * scale, 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(47,191,113,0.25)"; ctx.strokeStyle = "#2fbf71"; ctx.lineWidth = 2;
+    ctx.beginPath(); fp.forEach(([x, y], i) => { const [a, b] = w(x, y); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // heading arrow from the axle center
+  const [ax, ay] = w(0, 0), [hx, hy] = w(0.75, 0);
+  ctx.strokeStyle = "#4c8dff"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(hx, hy); ctx.stroke();
+  ctx.fillStyle = "#4c8dff"; ctx.beginPath(); ctx.arc(ax, ay, 4, 0, 2 * Math.PI); ctx.fill();
+}
+let drag = null;
+cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  followRobot = false; $("follow").classList.remove("on");
+  center.x -= (e.clientX - drag.x) / scale; center.y += (e.clientY - drag.y) / scale;
+  drag = { x: e.clientX, y: e.clientY }; drawMap();
+});
+cv.addEventListener("pointerup", () => { drag = null; });
+cv.addEventListener("wheel", (e) => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2); }, { passive: false });
+function zoom(k) { scale = Math.min(400, Math.max(8, scale * k)); drawMap(); }
+$("zoomIn").onclick = () => zoom(1.3);
+$("zoomOut").onclick = () => zoom(1 / 1.3);
+$("follow").onclick = () => { followRobot = true; $("follow").classList.add("on"); drawMap(); };
+
+// ---------------------------------------------------------------- teleop
+const vmaxEl = $("vmax");
+const showVmax = () => { $("vmaxVal").textContent = (vmaxEl.value * 3.6).toFixed(1) + " км/ч"; };
+vmaxEl.oninput = showVmax; showVmax();
+let joyCmd = null;
+const joy = $("joy"), knob = $("knob");
+function joyFrom(e) {
+  const r = joy.getBoundingClientRect(), R = r.width / 2;
+  let dx = (e.clientX - r.left - R) / R, dy = (e.clientY - r.top - R) / R;
+  const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
+  knob.style.left = (R + dx * R - 32) + "px"; knob.style.top = (R + dy * R - 32) + "px";
+  joyCmd = { v: -dy * parseFloat(vmaxEl.value), w: -dx * W_MAX };
+}
+function stopJoystick() {
+  if (joyCmd) post("/api/teleop", { v: 0, w: 0 });
+  joyCmd = null; knob.style.left = "63px"; knob.style.top = "63px";
+}
+joy.addEventListener("pointerdown", (e) => { if (estop) return; joy.setPointerCapture(e.pointerId); joyFrom(e); });
+joy.addEventListener("pointermove", (e) => { if (joyCmd) joyFrom(e); });
+joy.addEventListener("pointerup", stopJoystick);
+joy.addEventListener("pointercancel", stopJoystick);
+
+const keys = new Set();
+const KEYMAP = { KeyW: "f", ArrowUp: "f", KeyS: "b", ArrowDown: "b", KeyA: "l", ArrowLeft: "l", KeyD: "r", ArrowRight: "r" };
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); engageStop(); return; }
+  if (KEYMAP[e.code] && !estop) { e.preventDefault(); keys.add(KEYMAP[e.code]); }
+});
+window.addEventListener("keyup", (e) => {
+  if (!KEYMAP[e.code]) return;
+  keys.delete(KEYMAP[e.code]);
+  if (!keys.size) post("/api/teleop", { v: 0, w: 0 });
+});
+window.addEventListener("blur", () => { keys.clear(); stopJoystick(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) { keys.clear(); stopJoystick(); } });
+
+setInterval(() => {
+  if (estop) return;
+  let cmd = joyCmd;
+  if (!cmd && keys.size) {
+    const vmax = parseFloat(vmaxEl.value);
+    cmd = { v: (keys.has("f") ? vmax : 0) - (keys.has("b") ? vmax / 2 : 0),
+            w: (keys.has("l") ? W_MAX * 0.7 : 0) - (keys.has("r") ? W_MAX * 0.7 : 0) };
+  }
+  if (cmd) post("/api/teleop", cmd, 300);
+}, 100);
+
+resize(); poll();
+</script>
+</body>
+</html>

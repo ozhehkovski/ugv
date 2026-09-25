@@ -24,7 +24,8 @@
 - [x] Bench checks: straight run, tank turn, estop, stop on timeout.
 - [ ] Tune the id66 speed PID in VESC Tool. It oscillates: 39–489 ERPM measured for 300 commanded. id65 is stable.
 - [ ] Low-speed deadband: below about 60 ERPM (0.026 m/s per wheel) the wheels do not move.
-- [ ] After estop release, require a zero command before moving again.
+- [x] After estop release, require a zero command before moving again.
+- [x] Web panel (map + lidar + footprint, camera, status, joystick with dead-man, big STOP).
 - [ ] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
 - [ ] Measure the real track width (center to center) and check it with a 360° spin.
 

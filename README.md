@@ -18,6 +18,7 @@ All geometry lives in [`robot.yaml`](ros2_ws/src/ugv_description/config/robot.ya
 - `ugv_description`: `robot.yaml` and the URDF.
 - `ugv_drivers`: VESC diff-drive driver, RPLIDAR, BNO085, camera, command mux, footprint publisher. The pure-Python core has unit tests.
 - `ugv_bringup`: launch files and configs (EKF, safety chain, SLAM baseline).
+- `ugv_webui`: operator web panel on port 8090. It shows the live SLAM map with lidar and footprint, the camera and the status. It has a joystick/WASD teleop with a dead-man, and a big STOP (Space).
 
 ## Velocity safety chain
 
@@ -33,18 +34,20 @@ The driver enforces the hard limits on its own: 0.55 m/s (2 km/h), 0.9 rad/s and
 
 ```bash
 ./scripts/deploy.sh                                   # rsync + colcon build on the robot (UGV_HOST=luki@192.168.1.58)
-ssh luki@192.168.1.58 '~/ugv_ws/scripts/robot_up.sh start'   # background; `stop` to stop, log in ~/ugv_base.log
+ssh luki@192.168.1.58 '~/ugv_ws/scripts/robot_up.sh start'   # base + SLAM + web panel in background; `stop` to stop, log in ~/ugv_base.log
+# open http://192.168.1.58:8090 from a phone/laptop on the same Wi-Fi
 # or in the foreground on the robot:
-ros2 launch ugv_bringup base.launch.py
+ros2 launch ugv_bringup robot.launch.py        # base.launch.py = without SLAM and web panel
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=cmd_vel/teleop
 ```
 
-Emergency stop is a latched `std_msgs/Bool` on `/estop`. Publish from a process that stays alive, as `scripts/estop_test.py` does. `ros2 topic pub --once` exits before the message is delivered.
+Emergency stop is a latched `std_msgs/Bool` on `/estop`. The web panel owns a live publisher for it. After release, the driver will not move until it sees a zero command, so a held joystick cannot make the robot jump. Publish from a process that stays alive, as `scripts/estop_test.py` does. `ros2 topic pub --once` exits before the message is delivered.
 
 ## Tests
 
 ```bash
 cd ros2_ws/src/ugv_drivers && python3 -m pytest -q test
+cd ros2_ws/src/ugv_webui && python3 -m pytest -q test
 ```
 
 Bench scripts for use with the robot on a stand are in `scripts/`: `vesc_bench.py`, `chain_test.py`, `estop_test.py` and `turn_test.py`.
