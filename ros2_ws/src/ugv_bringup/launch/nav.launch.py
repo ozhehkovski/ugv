@@ -27,5 +27,5 @@ def generate_launch_description() -> LaunchDescription:
         nav_node("nav2_waypoint_follower", "waypoint_follower", "waypoint_follower"),
         nav_node("nav2_lifecycle_manager", "lifecycle_manager", "lifecycle_manager_navigation"),
         # frontier exploration on the accessibility layer (idle until enabled from the web panel)
-        Node(package="ugv_mapping", executable="explorer", name="explorer", output="screen"),
+        Node(package="ugv_mapping", executable="explorer", name="explorer", respawn=True, respawn_delay=2.0, output="screen"),
     ])

@@ -119,8 +119,11 @@ class SafetyGovernorNode(Node):
                 time.sleep(0.1)
         finally:
             self.escape_pub.publish(Twist())
-        log = self.get_logger().info if res.success else self.get_logger().warn
-        log(f"escape: {res.message}")
+        # rclpy forbids changing the severity of one log call site: two separate calls
+        if res.success:
+            self.get_logger().info(f"escape: {res.message}")
+        else:
+            self.get_logger().warn(f"escape failed: {res.message}")
         return res
 
     def _on_cmd(self, msg: Twist) -> None:

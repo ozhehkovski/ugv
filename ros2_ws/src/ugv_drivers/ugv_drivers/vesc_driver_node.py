@@ -189,8 +189,10 @@ class VescDriver(Node):
                     side.can_id, side.found = can_id, True
                     break
             how = "missing" if not side.found else ("local" if side.can_id is None else "forward-CAN")
-            log = self.get_logger().info if side.found else self.get_logger().error
-            log(f"{side.name} VESC id={side.vesc_id}: {how}")
+            if side.found:      # separate call sites: rclpy forbids changing severity per site
+                self.get_logger().info(f"{side.name} VESC id={side.vesc_id}: {how}")
+            else:
+                self.get_logger().error(f"{side.name} VESC id={side.vesc_id}: {how}")
         if not (self.left.found and self.right.found):
             self._close()
             return False

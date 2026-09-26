@@ -103,6 +103,15 @@
   safety_governor ~/escape: picks the allowed short motion that gains the most clearance until 15 cm, called before every goal.
   Verified: escape (forward + right turn, 7 → 17 cm), then 7.25 m back through the doorway, 4.9 cm error.
 - [ ] Rerun exploration with all fixes; consider reverse planning for tight spots.
+  Run 2 (2026-09-26): drove 7.3 m, then **ran into a mirror**: lidar does not see mirrors or glass (the beam reflects away and
+  it "sees" the reflected room). Then the safety_governor crashed (rclpy: one log call site used with two severities) →
+  no commands → the driver watchdog stopped the wheels (fail-safe worked), but nothing restarted it.
+  Fixed: logger misuse (also in vesc_driver), respawn for our nodes (not map_manager: it owns the slam_toolbox process).
+- [ ] MIRRORS / GLASS (lidar-invisible): virtual walls drawn in the web panel (costmaps + governor), bump detection
+  (motor current up + wheels stalled → stop, back off, mark an obstacle), and hardware options (ultrasonic / ToF sensors).
+- [ ] Escape vs the velocity smoother: the escape picks a full-speed motion, but the smoothed ramp-up gets lifted by
+  min_wheel_speed and blocked near 0 cm clearance.
+- [ ] Estop state is lost on a stack restart (webui starts with estop=false): persist it.
 - [ ] Waypoints / patrol route.
 
 ### 5. Follow-me
