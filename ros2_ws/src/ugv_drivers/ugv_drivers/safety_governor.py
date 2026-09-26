@@ -65,13 +65,10 @@ class SafetyGovernor:
         # points inside the body are self-hits / noise (the lidar sits on top of the body)
         return points[(c > 0.0) & (c < self.roi)]
 
-    def _time_to_violation(self, v: float, w: float, pts: np.ndarray, horizon: float) -> float | None:
-        """First time the body gets closer than stop_margin while closing in; None if never."""
-        prev = float(self.body.clearance(pts).min())
+    def _poses(self, v: float, w: float, horizon: float):
+        """Exact unicycle integration: yields (x, y, theta) every dt up to horizon."""
         x = y = th = 0.0
-        steps = int(math.ceil(horizon / self.dt))
-        for k in range(1, steps + 1):
-            # exact unicycle integration over dt
+        for _ in range(int(math.ceil(horizon / self.dt))):
             if abs(w) < 1e-6:
                 x += v * self.dt * math.cos(th)
                 y += v * self.dt * math.sin(th)
@@ -79,10 +76,39 @@ class SafetyGovernor:
                 x += v / w * (math.sin(th + w * self.dt) - math.sin(th))
                 y -= v / w * (math.cos(th + w * self.dt) - math.cos(th))
             th += w * self.dt
-            c, s = math.cos(th), math.sin(th)
-            rel = pts - np.array([x, y])
-            local = np.column_stack((c * rel[:, 0] + s * rel[:, 1], -s * rel[:, 0] + c * rel[:, 1]))
-            clr = float(self.body.clearance(local).min())
+            yield x, y, th
+
+    def _clearance_at(self, pts: np.ndarray, x: float, y: float, th: float) -> float:
+        c, s = math.cos(th), math.sin(th)
+        rel = pts - np.array([x, y])
+        local = np.column_stack((c * rel[:, 0] + s * rel[:, 1], -s * rel[:, 0] + c * rel[:, 1]))
+        return float(self.body.clearance(local).min())
+
+    def escape_command(self, points: np.ndarray, candidates: list[tuple[float, float]],
+                       duration: float = 1.0) -> tuple[float, float, float] | None:
+        """Among short motions the governor allows in full, the one that gains the most clearance.
+        Returns (v, w, clearance after `duration`) or None when nothing gains clearance."""
+        pts = self._relevant(np.asarray(points, dtype=float).reshape(-1, 2))
+        if len(pts) == 0:
+            return None
+        now = float(self.body.clearance(pts).min())
+        best: tuple[float, float, float] | None = None
+        for v, w in candidates:
+            if self.limit(v, w, pts).reason != "ok":
+                continue
+            clr = min(self._clearance_at(pts, *p) for p in self._poses(v, w, duration))
+            final = self._clearance_at(pts, *list(self._poses(v, w, duration))[-1])
+            if clr < min(now, self.stop_margin) - CLOSING_EPS or final <= now + CLOSING_EPS:
+                continue
+            if best is None or final > best[2]:
+                best = (v, w, final)
+        return best
+
+    def _time_to_violation(self, v: float, w: float, pts: np.ndarray, horizon: float) -> float | None:
+        """First time the body gets closer than stop_margin while closing in; None if never."""
+        prev = float(self.body.clearance(pts).min())
+        for k, pose in enumerate(self._poses(v, w, horizon), start=1):
+            clr = self._clearance_at(pts, *pose)
             if clr < self.stop_margin and clr < prev - CLOSING_EPS:
                 return (k - 1) * self.dt
             prev = clr

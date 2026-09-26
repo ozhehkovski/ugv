@@ -17,10 +17,10 @@ def costmap(name: str) -> dict:
     return NAV2[name][name]["ros__parameters"]
 
 
-@pytest.mark.parametrize("name", ["local_costmap", "global_costmap"])
-def test_footprint_matches_robot_yaml(name: str) -> None:
+@pytest.mark.parametrize("name,padding_key", [("local_costmap", "footprint_padding"), ("global_costmap", "planner_padding")])
+def test_footprint_matches_robot_yaml(name: str, padding_key: str) -> None:
     fp = ast.literal_eval(costmap(name)["footprint"])
-    expected = footprint_polygon(ROBOT)
+    expected = footprint_polygon(ROBOT, padding=ROBOT["chassis"][padding_key])
     assert len(fp) == len(expected)
     for (x, y), (ex, ey) in zip(fp, expected):
         assert x == pytest.approx(ex, abs=1e-3) and y == pytest.approx(ey, abs=1e-3)
@@ -34,10 +34,16 @@ def test_inflation_covers_circumscribed_radius(name: str) -> None:
 
 def test_controller_speeds_within_hard_limits() -> None:
     mppi = NAV2["controller_server"]["ros__parameters"]["FollowPath"]
-    assert mppi["primary_controller"] == "nav2_mppi_controller::MPPIController"
-    assert mppi["rotate_to_heading_angular_vel"] <= ROBOT["limits"]["max_angular"]
+    assert mppi["plugin"] == "nav2_mppi_controller::MPPIController"
     assert mppi["vx_max"] <= ROBOT["limits"]["max_linear"]
     assert mppi["wz_max"] <= ROBOT["limits"]["max_angular"]
     assert mppi["CostCritic"]["consider_footprint"] is True
     assert mppi["motion_model"] == "DiffDrive"
     assert math.isclose(mppi["time_steps"] * mppi["model_dt"], 2.5)
+
+
+def test_nav2_margin_exceeds_governor_margin() -> None:
+    """Nav2 must consider blocked anything the safety governor blocks, or they deadlock."""
+    safety = yaml.safe_load(open(os.path.join(SRC, "ugv_bringup", "config", "safety.yaml"), encoding="utf-8"))
+    governor_margin = safety["safety_governor"]["ros__parameters"]["stop_margin"]
+    assert ROBOT["chassis"]["footprint_padding"] > governor_margin

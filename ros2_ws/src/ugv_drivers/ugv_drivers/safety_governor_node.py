@@ -12,7 +12,10 @@ import time
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
@@ -23,6 +26,9 @@ from .robot_config import load_robot_config
 from .safety_governor import Body, SafetyGovernor
 
 
+ESCAPE_CANDIDATES = [(v, w) for v in (0.12, 0.0, -0.1) for w in (0.4, 0.0, -0.4) if (v, w) != (0.0, 0.0)]
+
+
 class SafetyGovernorNode(Node):
     def __init__(self) -> None:
         super().__init__("safety_governor")
@@ -31,6 +37,8 @@ class SafetyGovernorNode(Node):
         self.declare_parameter("stop_margin", 0.05)
         self.declare_parameter("horizon", 1.5)
         self.declare_parameter("scan_timeout", 0.5)
+        self.declare_parameter("escape_clearance", 0.15)   # well above the Nav2 paddings: Nav2 can plan and move again
+        self.declare_parameter("escape_timeout", 8.0)
         gp = self.get_parameter
         cfg = load_robot_config(str(gp("config_path").value) or None)
         ch = cfg["chassis"]
@@ -58,6 +66,11 @@ class SafetyGovernorNode(Node):
         self.status_pub = self.create_publisher(String, "safety_status", 10)
         self.create_subscription(LaserScan, "scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Twist, "cmd_vel_in", self._on_cmd, 10)
+        # ~/escape runs for seconds: its own thread, so scans and commands keep flowing meanwhile
+        self.escape_pub = self.create_publisher(Twist, "cmd_vel/escape", 10)
+        self.escape_clearance = float(gp("escape_clearance").value)
+        self.escape_timeout = float(gp("escape_timeout").value)
+        self.create_service(Trigger, "~/escape", self._on_escape, callback_group=MutuallyExclusiveCallbackGroup())
         self.get_logger().info(f"safety_governor: body {body}, margin {self.gov.stop_margin} m, horizon {self.gov.horizon} s")
 
     def _on_scan(self, msg: LaserScan) -> None:
@@ -79,6 +92,37 @@ class SafetyGovernorNode(Node):
         self.points = np.column_stack((tx + c * lx - s * ly, ty + s * lx + c * ly))
         self.scan_t = time.monotonic()
 
+    def _on_escape(self, _req: Trigger.Request, res: Trigger.Response) -> Trigger.Response:
+        """Back out of a tight spot (e.g. after manual driving) until Nav2 can plan again."""
+        t0 = time.monotonic()
+        res.success, res.message = False, "timeout"
+        moved = False
+        try:
+            while time.monotonic() - t0 < self.escape_timeout:
+                if time.monotonic() - self.scan_t > self.scan_timeout:
+                    res.message = "no fresh scan"
+                    break
+                pts = self.points
+                clearance = self.gov.limit(0.0, 0.0, pts).clearance
+                if clearance >= self.escape_clearance:
+                    res.success = True
+                    res.message = f"clearance {clearance:.2f} m" + (" after escape" if moved else " (no escape needed)")
+                    break
+                best = self.gov.escape_command(pts, ESCAPE_CANDIDATES)
+                if best is None:
+                    res.message = f"no motion gains clearance (clearance {clearance:.2f} m)"
+                    break
+                out = Twist()
+                out.linear.x, out.angular.z = best[0], best[1]
+                self.escape_pub.publish(out)
+                moved = True
+                time.sleep(0.1)
+        finally:
+            self.escape_pub.publish(Twist())
+        log = self.get_logger().info if res.success else self.get_logger().warn
+        log(f"escape: {res.message}")
+        return res
+
     def _on_cmd(self, msg: Twist) -> None:
         out = Twist()
         if time.monotonic() - self.scan_t > self.scan_timeout:
@@ -98,8 +142,10 @@ class SafetyGovernorNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = SafetyGovernorNode()
+    executor = MultiThreadedExecutor(num_threads=3)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

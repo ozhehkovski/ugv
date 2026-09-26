@@ -25,7 +25,7 @@ from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray
 from action_msgs.msg import GoalStatus
 from action_msgs.srv import CancelGoal
-from std_srvs.srv import SetBool
+from std_srvs.srv import SetBool, Trigger
 from geometry_msgs.msg import PolygonStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
@@ -105,6 +105,7 @@ class WebUi(Node):
         # cancel ALL navigation goals, whoever sent them (explorer, future follow/fleet nodes)
         self.cancel_all_cli = self.create_client(CancelGoal, "navigate_to_pose/_action/cancel_goal")
         self.explore_cli = self.create_client(SetBool, "explorer/enable")
+        self.escape_cli = self.create_client(Trigger, "safety_governor/escape")
         self.explore_status = ""
         self.create_subscription(String, "explorer/status", self._on_explore_status, LATCHED)
         self.create_subscription(Path, "plan", self._on_plan, 10)
@@ -180,6 +181,16 @@ class WebUi(Node):
         self.gate.cancel()                       # stop manual driving: navigation takes over
         with self.lock:
             self.nav = {"state": "sending", "goal": [x, y, th], "remaining": None, "recoveries": 0, "message": ""}
+        # parked tight against something (manual driving)? Nav2 cannot plan from inside its margin
+        if self.escape_cli.wait_for_service(timeout_sec=1.0):
+            fut = self.escape_cli.call_async(Trigger.Request())
+            deadline = time.monotonic() + 10.0
+            while not fut.done() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if fut.done() and not fut.result().success:
+                with self.lock:
+                    self.nav.update(state="aborted", message=fut.result().message)
+                return {"success": False, "message": "не могу выбраться: " + fut.result().message}
         fut = self.nav_client.send_goal_async(goal, feedback_callback=self._on_nav_feedback)
         fut.add_done_callback(self._on_nav_accepted)
         self.get_logger().info(f"web: goal ({x:.2f}, {y:.2f}, {math.degrees(th):.0f}°)")

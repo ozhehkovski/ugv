@@ -23,7 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import String
-from std_srvs.srv import SetBool
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 from ugv_interfaces.srv import MapCommand
 
@@ -68,6 +68,7 @@ class Explorer(Node):
         self.tfl = TransformListener(self.tf, self)
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
         self.map_cli = self.create_client(MapCommand, "map_manager/command")
+        self.escape_cli = self.create_client(Trigger, "safety_governor/escape")
         self.status_pub = self.create_publisher(String, "~/status", LATCHED)
         self.create_subscription(OccupancyGrid, "map_accessible", self._on_layer, LATCHED)
         self.create_service(SetBool, "~/enable", self._on_enable)
@@ -136,6 +137,26 @@ class Explorer(Node):
     def _send(self, x: float, y: float, yaw: float) -> None:
         if not self.nav.wait_for_server(timeout_sec=2.0):
             self._stop("Nav2 not available")
+            return
+        self.pending = True
+        if self.escape_cli.service_is_ready():     # get out of tight spots first (async, then send)
+            self.escape_cli.call_async(Trigger.Request()).add_done_callback(
+                lambda fut: self._send_after_escape(fut, x, y, yaw))
+            return
+        self._send_goal(x, y, yaw)
+
+    def _send_after_escape(self, fut: Any, x: float, y: float, yaw: float) -> None:
+        res = fut.result()
+        if not res.success and not self.enabled:
+            self.pending = False
+            return
+        if not res.success:
+            self.get_logger().warn(f"escape failed: {res.message} — trying the goal anyway")
+        self._send_goal(x, y, yaw)
+
+    def _send_goal(self, x: float, y: float, yaw: float) -> None:
+        if not self.enabled:
+            self.pending = False
             return
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = "map"

@@ -67,3 +67,21 @@ def test_min_wheel_speed_lift_cannot_push_into_obstacle() -> None:
 
 def test_idle_command() -> None:
     assert gov().limit(0.0, 0.0, wall_ahead(0.01)).reason == "idle"
+
+
+ESCAPE = [(v, w) for v in (0.12, 0.0, -0.1) for w in (0.4, 0.0, -0.4) if (v, w) != (0.0, 0.0)]
+
+
+def test_escape_from_wall_behind_left_prefers_gaining_motion() -> None:
+    """The hallway case: wall 1-3 cm behind the rear-left corner."""
+    ys = np.linspace(0.0, 0.6, 25)
+    pts = np.column_stack((np.full_like(ys, BODY.rear - 0.02), ys))
+    best = gov().escape_command(pts, ESCAPE)
+    assert best is not None
+    v, w, clr = best
+    assert v > 0                                  # pull away forward
+    assert clr > 0.05
+
+
+def test_escape_none_when_nothing_helps_and_none_needed_far_away() -> None:
+    assert gov().escape_command(np.empty((0, 2)), ESCAPE) is None

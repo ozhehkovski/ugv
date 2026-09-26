@@ -96,7 +96,13 @@
   done → save the map and return to the start. STOP / manual driving cancel ALL nav goals (including the explorer's) and stop exploring.
   First run 2026-09-26: 11 m driven, map 204×135 → 314×165 cells. It then drove into a narrow dead-end hallway it could not turn in
   → goals must now be in tank-turn room.
-- [ ] Rerun exploration after the dead-end fix; consider reverse planning (Lattice allow_reverse_expansion) for tight spots.
+- [x] Deadlock in the hallway (the robot was NOT physically trapped): Nav2 (3 cm margin) kept commanding the short-way
+  turn, the governor (5 cm) blocked it, nothing else was tried. Fixes:
+  controller padding 6 cm > governor 5 cm (test enforced), RotationShim removed (short-way only, MPPI samples both ways),
+  planner padding 2 cm (axle 6.5 cm from the tail: a wall behind made the start "lethal" → no plan),
+  safety_governor ~/escape: picks the allowed short motion that gains the most clearance until 15 cm, called before every goal.
+  Verified: escape (forward + right turn, 7 → 17 cm), then 7.25 m back through the doorway, 4.9 cm error.
+- [ ] Rerun exploration with all fixes; consider reverse planning for tight spots.
 - [ ] Waypoints / patrol route.
 
 ### 5. Follow-me

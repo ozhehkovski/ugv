@@ -10,7 +10,10 @@ chassis:
   width: 0.56               # overall, including drive wheels
   height: 0.16              # floor → top of wheels / deck
   axle_from_front: 0.555    # nose → drive axle center (axle is 6.5 cm from the tail)
-  footprint_padding: 0.03   # safety margin added around the body for collision checks
+  footprint_padding: 0.06   # Nav2 CONTROLLER (local costmap) margin. MUST exceed the safety_governor
+                            # stop_margin (0.05), otherwise MPPI commands motions the governor blocks → deadlock
+  planner_padding: 0.02     # Nav2 global PLANNER margin: small, because the axle is only 6.5 cm from the tail
+                            # and a wall behind would make the start pose "lethal" (no plan at all)
 
 wheels:
   radius: 0.0870            # effective rolling radius: lidar-calibrated 2026-09-26 (scale 1.055 vs 0.0825, two runs)
