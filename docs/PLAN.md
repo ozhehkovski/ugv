@@ -76,10 +76,23 @@
 - [ ] Frontier exploration (needs Nav2, stage 4).
 - [ ] Teleop mux timeout 0.5 → 0.3 s: a lost release message adds up to 0.5 s × speed of travel.
 
-### 4. Navigation
-- [ ] Nav2 with the rectangular footprint. Controller: MPPI (DiffDrive), with the footprint critic.
-- [ ] In-place turn only when the 0.62 m sweep circle is free. Otherwise back up or drive forward first.
-- [ ] Output to `cmd_vel/nav`.
+### 4. Navigation ✅ 2026-09-26 (exploration: next)
+- [x] Nav2: SmacPlannerLattice (diff-drive primitives, full-footprint collision checks), RotationShim (tank turn toward
+  the path with a footprint check over the rotation) + MPPI (DiffDrive, CostCritic consider_footprint).
+  Output → cmd_vel/nav → mux → smoother → safety_governor → driver: all hard limits and the governor still apply.
+  test_nav2_config.py keeps the Nav2 footprint = robot.yaml, inflation ≥ circumscribed radius, speeds ≤ caps.
+- [x] Tuning on the floor: 1 Hz replanning + rotation_penalty 5 made 3 m loops for a 0.9 m goal (43 s, 5 recoveries).
+  Now: replan every 10 s or when blocked, rotation_penalty 1.0, cost_penalty 1.0:
+  | goal | time | error |
+  |---|---|---|
+  | 0.9 m straight | 4.1 s | 10 cm (tol 15) |
+  | 0.8 m + 180° turn | 7.2 s | 3.7 cm, 0.3° (tol 10 cm) |
+  | 2.3 m + turn | 8.3 s | 11 cm, 0.2° |
+- [x] Bug found: the heading-hold correction was added after the angular limit (0.97 rad/s measured, cap 0.9) → clamped again.
+- [x] Web panel: «Цель» (click + drag), planned path, nav status, «Отменить поездку».
+  STOP cancels the goal (verified: no resume after release). Manual driving cancels the goal.
+- [ ] Autonomous frontier exploration on the accessibility layer.
+- [ ] Waypoints / patrol route.
 
 ### 5. Follow-me
 - [ ] YOLO11n (TensorRT) + ByteTrack + re-ID so the robot locks onto one person.

@@ -87,6 +87,7 @@
   <span class="chip" id="cSpeed">скорость …</span>
   <span class="chip" id="cSafe">защита …</span>
   <span class="chip" id="cLidar">лидар …</span>
+  <span class="chip" id="cNav">навигация …</span>
 </header>
 <main>
   <section class="panel" id="mapPanel">
@@ -97,6 +98,8 @@
       <button id="follow" class="on" title="Держать робота в центре">За роботом</button>
       <button id="accessBtn" class="on" title="Где робот проходит (зелёный) и может развернуться (ярко-зелёный)">Доступность</button>
       <button id="poseBtn" title="Робота перенесли: укажите, где он стоит">Я здесь</button>
+      <button id="goalBtn" title="Поехать в точку на карте">Цель</button>
+      <button id="cancelBtn" style="display:none;border-color:var(--warn);color:var(--warn)">Отменить поездку</button>
     </div>
     <div id="poseHint">Нажмите, где стоит робот, и протяните в сторону носа</div>
     <canvas id="map"></canvas>
@@ -213,6 +216,16 @@ function render() {
   $("mapTitle").textContent = s.map ? "Карта · SLAM" : (s.pose_frame === "odom" ? "Одометрия (карты пока нет)" : "Карта");
   if (s.map && s.map.version !== mapVersion) loadMap(s.map);
   if (s.access && s.access.version !== accessVersion) loadAccess(s.access);
+  const nav = s.nav || {};
+  const NAV = { idle: ["", "навигация: нет цели"], sending: ["warn", "<b>отправляю цель…</b>"],
+    active: ["ok", "<b>еду к цели</b>"], succeeded: ["ok", "цель достигнута"], aborted: ["bad", "<b>не смог доехать</b>"],
+    canceled: ["", "поездка отменена"], rejected: ["bad", "<b>цель отклонена</b>"] };
+  const [ncls, ntxt] = NAV[nav.state] || ["", "навигация: " + nav.state];
+  let nextra = nav.state === "active" && nav.remaining !== null ? " · осталось " + nav.remaining.toFixed(1) + " м" : "";
+  if (nav.recoveries) nextra += " · манёвров " + nav.recoveries;
+  if (nav.state === "canceled" && nav.message) nextra += " (" + nav.message + ")";
+  chip("cNav", ncls, ntxt + nextra);
+  $("cancelBtn").style.display = (nav.state === "active" || nav.state === "sending") ? "" : "none";
   const [mname, mstate] = (s.map_status || "|").split("|");
   if (mname) $("activeMap").textContent = mname;
   $("slamState").textContent = mstate === "running" ? "" : "(SLAM перезапускается)";
@@ -278,6 +291,18 @@ function drawMap() {
   if (!state) return;
   const c = Math.cos(p.th), s = Math.sin(p.th);
   const w = (bx, by) => toScreen(p.x + c * bx - s * by, p.y + s * bx + c * by);
+  // planned path and goal (map frame)
+  if (state.plan && state.plan.length > 1 && state.pose_frame === "map") {
+    ctx.strokeStyle = "rgba(76,141,255,0.9)"; ctx.lineWidth = 2.5; ctx.setLineDash([8, 5]);
+    ctx.beginPath(); state.plan.forEach(([x, y], i) => { const [a, b] = toScreen(x, y); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  const g = state.nav && state.nav.goal;
+  if (g && (state.nav.state === "active" || state.nav.state === "sending")) {
+    const [gx, gy] = toScreen(g[0], g[1]), [hx2, hy2] = toScreen(g[0] + 0.5 * Math.cos(g[2]), g[1] + 0.5 * Math.sin(g[2]));
+    ctx.strokeStyle = "#4c8dff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(hx2, hy2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(gx, gy, 8, 0, 2 * Math.PI); ctx.stroke();
+  }
   // lidar
   ctx.fillStyle = "#ff4d4f";
   for (const [bx, by] of state.scan) { const [a, b] = w(bx, by); ctx.fillRect(a - 1.5, b - 1.5, 3, 3); }
@@ -300,7 +325,8 @@ function drawMap() {
   if (poseDrag) {
     const [px, py] = toScreen(poseDrag.x, poseDrag.y);
     const [qx, qy] = toScreen(poseDrag.x + 0.8 * Math.cos(poseDrag.th), poseDrag.y + 0.8 * Math.sin(poseDrag.th));
-    ctx.strokeStyle = "#f0b429"; ctx.fillStyle = "#f0b429"; ctx.lineWidth = 3;
+    const col = poseMode === "goal" ? "#4c8dff" : "#f0b429";
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy); ctx.stroke();
     ctx.beginPath(); ctx.arc(px, py, 6, 0, 2 * Math.PI); ctx.fill();
   }
@@ -326,18 +352,36 @@ cv.addEventListener("pointermove", (e) => {
 cv.addEventListener("pointerup", async () => {
   drag = null;
   if (!poseDrag) return;
-  const p = poseDrag;
+  const p = poseDrag, mode = poseMode;
   setPoseMode(false);
-  if (confirm("Робот стоит здесь, нос по стрелке? SLAM перезапустится на ~5 с.")) {
+  if (mode === "goal") {
+    await sendGoal(p);
+  } else if (confirm("Робот стоит здесь, нос по стрелке? SLAM перезапустится на ~5 с.")) {
     await mapCmd("set_pose", "", [p.x, p.y, p.th]);
   }
   poseDrag = null; drawMap();
 });
-function setPoseMode(on) {
-  poseMode = on; $("poseBtn").classList.toggle("on", on); $("poseHint").classList.toggle("show", on);
-  cv.style.cursor = on ? "crosshair" : "grab";
+function setPoseMode(mode) {
+  poseMode = mode;
+  $("poseBtn").classList.toggle("on", mode === "pose"); $("goalBtn").classList.toggle("on", mode === "goal");
+  $("poseHint").textContent = mode === "goal" ? "Нажмите, куда ехать, и протяните в сторону, куда смотреть носом"
+                                              : "Нажмите, где стоит робот, и протяните в сторону носа";
+  $("poseHint").classList.toggle("show", !!mode);
+  cv.style.cursor = mode ? "crosshair" : "grab";
 }
-$("poseBtn").onclick = () => setPoseMode(!poseMode);
+$("poseBtn").onclick = () => setPoseMode(poseMode === "pose" ? false : "pose");
+$("goalBtn").onclick = () => setPoseMode(poseMode === "goal" ? false : "goal");
+async function sendGoal(p) {
+  if (estop) { alert("Сначала снимите аварийный стоп"); return; }
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const r = await fetch("/api/goal", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pose: [p.x, p.y, p.th] }), signal: ctl.signal });
+    const res = await r.json();
+    if (!res.success) alert("Цель не принята: " + (res.message || res.error));
+  } catch (e) { alert("Нет ответа от робота"); } finally { clearTimeout(t); }
+}
+$("cancelBtn").onclick = () => post("/api/goal/cancel", {});
 $("accessBtn").onclick = () => { showAccess = !showAccess; $("accessBtn").classList.toggle("on", showAccess); drawMap(); };
 
 // ---------------------------------------------------------------- maps

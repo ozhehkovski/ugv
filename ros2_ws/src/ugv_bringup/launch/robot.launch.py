@@ -1,4 +1,4 @@
-"""Full robot: base (drivers + EKF + safety) + persistent SLAM map + accessible terrain + web panel.
+"""Full robot: base (drivers + EKF + safety) + persistent SLAM map + accessible terrain + Nav2 + web panel.
 
 Web panel: http://<robot-ip>:8090
 """
@@ -16,6 +16,9 @@ from launch_ros.actions import Node
 def generate_launch_description() -> LaunchDescription:
     pkg = get_package_share_directory("ugv_bringup")
     use_slam = LaunchConfiguration("use_slam")
+    nav = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(pkg, "launch", "nav.launch.py")),
+        condition=IfCondition(LaunchConfiguration("use_nav")))
 
     base = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg, "launch", "base.launch.py")),
@@ -24,8 +27,10 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_slam", default_value="true"),
+        DeclareLaunchArgument("use_nav", default_value="true"),
         DeclareLaunchArgument("webui_port", default_value="8090"),
         base,
+        nav,
         # map_manager starts/restarts slam_toolbox itself and keeps the map across restarts
         Node(package="ugv_mapping", executable="map_manager", name="map_manager", output="screen",
              condition=IfCondition(use_slam),

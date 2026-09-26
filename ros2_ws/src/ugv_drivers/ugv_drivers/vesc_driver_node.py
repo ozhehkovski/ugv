@@ -31,6 +31,7 @@ from .diff_drive import (
     VelocityLimiter,
     apply_min_wheel_speed,
     body_to_wheels,
+    clamp,
     erpm_per_mps,
     meters_per_tach,
 )
@@ -253,6 +254,7 @@ class VescDriver(Node):
         coasting = abs(v) > HOLD_MIN_SPEED
         hold_on = self.heading_hold_on and gyro_fresh and (moving_cmd or coasting)
         w += self.heading_hold.update(w, gyro_z, dt, hold_on)
+        w = clamp(w, self.limits.max_angular)      # the correction must never break the hard cap
         wl, wr = body_to_wheels(v, w, self.track, self.limits.max_wheel_speed)
         if abs(v_t) > 1e-3 or abs(w_t) > 1e-3:      # only while a motion is requested, never when stopping
             wl, wr = apply_min_wheel_speed(wl, wr, self.min_wheel_speed)

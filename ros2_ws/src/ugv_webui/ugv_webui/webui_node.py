@@ -23,8 +23,11 @@ import cv2
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PolygonStamped, Twist
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav2_msgs.action import NavigateToPose
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
@@ -69,6 +72,9 @@ class WebUi(Node):
         self.access_png: bytes | None = None
         self.access_meta: dict[str, Any] | None = None
         self.map_status = ""
+        self.plan: list[tuple[float, float]] = []
+        self.nav: dict[str, Any] = {"state": "idle", "goal": None, "remaining": None, "recoveries": 0, "message": ""}
+        self.nav_handle: Any = None
         self.scan_base: list[tuple[float, float]] = []
         self.scan_t = 0.0
         self.footprint: list[tuple[float, float]] = []
@@ -93,6 +99,8 @@ class WebUi(Node):
         self.create_subscription(OccupancyGrid, "map_accessible", self._on_access, LATCHED)
         self.create_subscription(String, "map_manager/status", self._on_map_status, 10)
         self.map_cli = self.create_client(MapCommand, "map_manager/command")
+        self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        self.create_subscription(Path, "plan", self._on_plan, 10)
         self.create_subscription(LaserScan, "scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(PolygonStamped, "footprint", self._on_footprint, 1)
         self.create_subscription(Odometry, "odom", self._on_odom, 10)
@@ -144,6 +152,66 @@ class WebUi(Node):
                 "version": version, "resolution": info.resolution, "width": info.width, "height": info.height,
                 "origin": [info.origin.position.x, info.origin.position.y, _yaw(info.origin.orientation)],
             }
+
+    def _on_plan(self, msg: Path) -> None:
+        pts = [(round(p.pose.position.x, 3), round(p.pose.position.y, 3)) for p in msg.poses]
+        step = max(1, len(pts) // 300)
+        with self.lock:
+            self.plan = pts[::step] + pts[-1:] if pts else []
+
+    # ------------------------------------------------------------------ navigation
+    def nav_goal(self, x: float, y: float, th: float) -> dict[str, Any]:
+        if self.estop:
+            return {"success": False, "message": "снимите аварийный стоп"}
+        if not self.nav_client.wait_for_server(timeout_sec=2.0):
+            return {"success": False, "message": "навигация (Nav2) недоступна"}
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = "map"
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position.x, goal.pose.pose.position.y = x, y
+        goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = math.sin(th / 2.0), math.cos(th / 2.0)
+        self.gate.cancel()                       # stop manual driving: navigation takes over
+        with self.lock:
+            self.nav = {"state": "sending", "goal": [x, y, th], "remaining": None, "recoveries": 0, "message": ""}
+        fut = self.nav_client.send_goal_async(goal, feedback_callback=self._on_nav_feedback)
+        fut.add_done_callback(self._on_nav_accepted)
+        self.get_logger().info(f"web: goal ({x:.2f}, {y:.2f}, {math.degrees(th):.0f}°)")
+        return {"success": True, "message": "цель отправлена"}
+
+    def _on_nav_accepted(self, fut: Any) -> None:
+        handle = fut.result()
+        with self.lock:
+            if not handle.accepted:
+                self.nav.update(state="rejected", message="Nav2 отклонил цель")
+                return
+            self.nav_handle = handle
+            self.nav["state"] = "active"
+        handle.get_result_async().add_done_callback(self._on_nav_result)
+
+    def _on_nav_feedback(self, msg: Any) -> None:
+        fb = msg.feedback
+        with self.lock:
+            self.nav["remaining"] = round(float(fb.distance_remaining), 2)
+            self.nav["recoveries"] = int(fb.number_of_recoveries)
+
+    def _on_nav_result(self, fut: Any) -> None:
+        status = fut.result().status
+        names = {GoalStatus.STATUS_SUCCEEDED: "succeeded", GoalStatus.STATUS_ABORTED: "aborted",
+                 GoalStatus.STATUS_CANCELED: "canceled"}
+        with self.lock:
+            self.nav["state"] = names.get(status, f"status {status}")
+            self.nav_handle = None
+            self.plan = []
+        self.get_logger().info(f"web: navigation {self.nav['state']}")
+
+    def nav_cancel(self, reason: str) -> None:
+        with self.lock:
+            handle = self.nav_handle
+        if handle is not None:
+            handle.cancel_goal_async()
+            self.get_logger().info(f"web: navigation canceled ({reason})")
+            with self.lock:
+                self.nav["message"] = reason
 
     def _on_map_status(self, msg: String) -> None:
         with self.lock:
@@ -244,6 +312,7 @@ class WebUi(Node):
     def set_estop(self, engage: bool) -> None:
         if engage:
             self.gate.cancel()
+            self.nav_cancel("аварийный стоп")     # never resume a goal after the stop is released
         self.estop_pub.publish(Bool(data=engage))
         with self.lock:
             self.estop = engage
@@ -271,6 +340,8 @@ class WebUi(Node):
                 "map": self.map_meta,
                 "access": self.access_meta,
                 "map_status": self.map_status,
+                "nav": dict(self.nav),
+                "plan": self.plan,
             }
 
     def _handler_class(self) -> type[BaseHTTPRequestHandler]:
@@ -335,11 +406,22 @@ class WebUi(Node):
                             raise ValueError("pose must be [x, y, theta]")
                         self._json(ui.map_command(str(body["command"]), str(body.get("name", "")), pose))
                         return
+                    elif self.path == "/api/goal":
+                        pose = body.get("pose")
+                        if not isinstance(pose, list) or len(pose) != 3:
+                            raise ValueError("pose must be [x, y, theta]")
+                        self._json(ui.nav_goal(*(float(v) for v in pose)))
+                        return
+                    elif self.path == "/api/goal/cancel":
+                        ui.nav_cancel("отменено оператором")
                     elif self.path == "/api/teleop":
                         if ui.estop:
                             self._json({"error": "estop engaged"}, 409)
                             return
-                        ui.gate.set(float(body["v"]), float(body["w"]), time.monotonic())
+                        v, w = float(body["v"]), float(body["w"])
+                        if abs(v) > 1e-3 or abs(w) > 1e-3:
+                            ui.nav_cancel("ручное управление")   # the operator took over
+                        ui.gate.set(v, w, time.monotonic())
                     else:
                         self._json({"error": "not found"}, 404)
                         return

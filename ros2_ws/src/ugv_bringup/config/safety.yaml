@@ -9,7 +9,7 @@ cmd_mux:
   ros__parameters:
     inputs: ["teleop", "follow", "nav"]
     rate_hz: 20.0
-    teleop: {topic: "cmd_vel/teleop", priority: 100, timeout: 0.5}
+    teleop: {topic: "cmd_vel/teleop", priority: 100, timeout: 0.3}   # a lost release costs ≤0.3 s of travel
     follow: {topic: "cmd_vel/follow", priority: 50, timeout: 0.3}
     nav: {topic: "cmd_vel/nav", priority: 10, timeout: 0.5}
 
