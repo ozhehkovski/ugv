@@ -12,6 +12,9 @@ Environment=PYTHONUNBUFFERED=1
 StandardOutput=append:%h/ugv_base.log
 StandardError=append:%h/ugv_base.log
 KillSignal=SIGINT
+# SIGINT only to the launch process: it forwards it to the nodes; map_manager then saves the
+# map before stopping its own slam_toolbox child (control-group would kill slam_toolbox first)
+KillMode=mixed
 TimeoutStopSec=20
 Restart=on-failure
 RestartSec=5

@@ -32,11 +32,14 @@ from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from .map_render import occupancy_to_image
+from ugv_interfaces.srv import MapCommand
+
+from .map_render import access_to_rgba, occupancy_to_image
 from .teleop_gate import TeleopGate
 
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 MAX_BODY = 4096
+MAP_CMD_TIMEOUT = 40.0      # s: load/new restart slam_toolbox after saving the current map
 
 
 def _yaw(q: Any) -> float:
@@ -63,6 +66,9 @@ class WebUi(Node):
         self.jpeg_t = 0.0
         self.map_png: bytes | None = None
         self.map_meta: dict[str, Any] | None = None
+        self.access_png: bytes | None = None
+        self.access_meta: dict[str, Any] | None = None
+        self.map_status = ""
         self.scan_base: list[tuple[float, float]] = []
         self.scan_t = 0.0
         self.footprint: list[tuple[float, float]] = []
@@ -84,6 +90,9 @@ class WebUi(Node):
         self.estop_pub = self.create_publisher(Bool, "estop", LATCHED)
         self.create_subscription(CompressedImage, "camera/image/compressed", self._on_image, qos_profile_sensor_data)
         self.create_subscription(OccupancyGrid, "map", self._on_map, LATCHED)
+        self.create_subscription(OccupancyGrid, "map_accessible", self._on_access, LATCHED)
+        self.create_subscription(String, "map_manager/status", self._on_map_status, 10)
+        self.map_cli = self.create_client(MapCommand, "map_manager/command")
         self.create_subscription(LaserScan, "scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(PolygonStamped, "footprint", self._on_footprint, 1)
         self.create_subscription(Odometry, "odom", self._on_odom, 10)
@@ -121,6 +130,38 @@ class WebUi(Node):
                 "resolution": info.resolution, "width": info.width, "height": info.height,
                 "origin": [info.origin.position.x, info.origin.position.y, _yaw(info.origin.orientation)],
             }
+
+    def _on_access(self, msg: OccupancyGrid) -> None:
+        info = msg.info
+        ok, buf = cv2.imencode(".png", access_to_rgba(msg.data, info.width, info.height))
+        if not ok:
+            self.get_logger().error("accessibility PNG encoding failed")
+            return
+        with self.lock:
+            version = (self.access_meta or {}).get("version", 0) + 1
+            self.access_png = buf.tobytes()
+            self.access_meta = {
+                "version": version, "resolution": info.resolution, "width": info.width, "height": info.height,
+                "origin": [info.origin.position.x, info.origin.position.y, _yaw(info.origin.orientation)],
+            }
+
+    def _on_map_status(self, msg: String) -> None:
+        with self.lock:
+            self.map_status = msg.data
+
+    def map_command(self, command: str, name: str = "", pose: list[float] | None = None) -> dict[str, Any]:
+        """Blocking call from an HTTP thread; the ROS executor (main thread) completes the future."""
+        if not self.map_cli.wait_for_service(timeout_sec=2.0):
+            return {"success": False, "message": "map_manager недоступен", "maps": [], "active": ""}
+        req = MapCommand.Request(command=command, name=name, pose=[float(v) for v in (pose or [])])
+        fut = self.map_cli.call_async(req)
+        deadline = time.monotonic() + MAP_CMD_TIMEOUT
+        while not fut.done():
+            if time.monotonic() > deadline:
+                return {"success": False, "message": "map_manager не ответил", "maps": [], "active": ""}
+            time.sleep(0.05)
+        res = fut.result()
+        return {"success": res.success, "message": res.message, "maps": list(res.maps), "active": res.active}
 
     def _on_scan(self, msg: LaserScan) -> None:
         try:
@@ -228,6 +269,8 @@ class WebUi(Node):
                 "camera_age": round(now - self.jpeg_t, 2) if self.jpeg_t else None,
                 "footprint": self.footprint,
                 "map": self.map_meta,
+                "access": self.access_meta,
+                "map_status": self.map_status,
             }
 
     def _handler_class(self) -> type[BaseHTTPRequestHandler]:
@@ -264,6 +307,15 @@ class WebUi(Node):
                         self._json({"error": "no map yet"}, 404)
                     else:
                         self._send(200, png, "image/png")
+                elif path == "/api/access.png":
+                    with ui.lock:
+                        png = ui.access_png
+                    if png is None:
+                        self._json({"error": "no layer yet"}, 404)
+                    else:
+                        self._send(200, png, "image/png")
+                elif path == "/api/maps":
+                    self._json(ui.map_command("list"))
                 elif path == "/camera.mjpg":
                     self._stream_camera()
                 else:
@@ -277,6 +329,12 @@ class WebUi(Node):
                     body = json.loads(self.rfile.read(n) or b"{}")
                     if self.path == "/api/estop":
                         ui.set_estop(bool(body["engage"]))
+                    elif self.path == "/api/map":
+                        pose = body.get("pose") or []
+                        if not isinstance(pose, list) or len(pose) not in (0, 3):
+                            raise ValueError("pose must be [x, y, theta]")
+                        self._json(ui.map_command(str(body["command"]), str(body.get("name", "")), pose))
+                        return
                     elif self.path == "/api/teleop":
                         if ui.estop:
                             self._json({"error": "estop engaged"}, 409)

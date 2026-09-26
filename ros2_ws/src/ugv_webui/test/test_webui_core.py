@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from ugv_webui.map_render import FREE, OCCUPIED, UNKNOWN, occupancy_to_image
+from ugv_webui.map_render import FREE, OCCUPIED, PASSABLE_RGBA, UNKNOWN, access_to_rgba, occupancy_to_image
 from ugv_webui.teleop_gate import TeleopGate
 
 
@@ -40,3 +40,11 @@ def test_gate_cancel_and_nan() -> None:
     assert gate.current(1.0) is None
     with pytest.raises(ValueError):
         gate.set(math.nan, 0.0, now=1.0)
+
+
+def test_access_overlay_colors_alpha_and_flip() -> None:
+    img = access_to_rgba([60, 100, 0, -1], width=2, height=2)   # bottom row: passable, turnable
+    assert img.shape == (2, 2, 4)
+    assert tuple(img[1, 0]) == (PASSABLE_RGBA[2], PASSABLE_RGBA[1], PASSABLE_RGBA[0], PASSABLE_RGBA[3])
+    assert img[1, 1, 3] > img[1, 0, 3]                            # turnable is more opaque
+    assert img[0, 0, 3] == 0 and img[0, 1, 3] == 0               # blocked / unknown transparent

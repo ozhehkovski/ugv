@@ -32,19 +32,29 @@
     border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
   .mapTools button.on { border-color: var(--accent); color: var(--accent); }
   .legend { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--muted); z-index: 2; }
-  .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
   #camPanel { aspect-ratio: 16 / 9; flex: none; }
   #cam { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
   #camMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
   .ctl { padding: 34px 12px 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 250px; }
   .ctl label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
   .ctl input[type=range] { width: 100%; }
-  #joy { position: relative; align-self: center; width: 190px; height: 190px; border-radius: 50%;
+  #joy { position: relative; flex: none; align-self: center; width: 190px; height: 190px; border-radius: 50%;
     background: radial-gradient(circle, #232932 0%, #1b2027 70%); border: 1px solid var(--line); touch-action: none; }
   #knob { position: absolute; width: 64px; height: 64px; border-radius: 50%; left: 63px; top: 63px;
     background: var(--accent); opacity: .85; pointer-events: none; }
   #joy.disabled { opacity: .35; }
   .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  .maps { flex: none; min-height: 0; gap: 8px; }
+  .maps select { width: 100%; background: #232932; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px; font-size: 13px; }
+  .btnRow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btnRow button { flex: 1; }
+  .ctl button:disabled { opacity: .45; cursor: default; }
+  #mapMsg { text-align: left; min-height: 16px; }
+  #mapMsg.bad { color: var(--bad); }
+  #poseHint { display: none; position: absolute; left: 50%; top: 44px; transform: translateX(-50%); z-index: 3;
+    background: rgba(76,141,255,.9); color: #fff; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+  #poseHint.show { display: block; }
   #stopBar { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
     display: flex; gap: 10px; background: var(--bg); }
   #stop { flex: 1; height: 84px; border: 0; border-radius: 14px; background: var(--stop); color: #fff;
@@ -85,9 +95,12 @@
       <button id="zoomOut" title="Отдалить">−</button>
       <button id="zoomIn" title="Приблизить">+</button>
       <button id="follow" class="on" title="Держать робота в центре">За роботом</button>
+      <button id="accessBtn" class="on" title="Где робот проходит (зелёный) и может развернуться (ярко-зелёный)">Доступность</button>
+      <button id="poseBtn" title="Робота перенесли: укажите, где он стоит">Я здесь</button>
     </div>
+    <div id="poseHint">Нажмите, где стоит робот, и протяните в сторону носа</div>
     <canvas id="map"></canvas>
-    <div class="legend">зелёный — корпус · пунктир — круг разворота · красное — лидар · сетка 1 м</div>
+    <div class="legend">корпус · пунктир — круг разворота · красное — лидар · зелёная заливка — проезд, ярче — есть место для разворота · сетка 1 м</div>
   </section>
   <div class="side">
     <section class="panel" id="camPanel">
@@ -101,6 +114,18 @@
       <input id="vmax" type="range" min="0.1" max="0.5" step="0.05" value="0.25">
       <div id="joy"><div id="knob"></div></div>
       <div class="hint">Джойстик или W A S D / стрелки. Робот едет, пока держите. Пробел — СТОП.</div>
+    </section>
+    <section class="panel ctl maps">
+      <h2>Карты</h2>
+      <label>Активная <span><b id="activeMap">…</b> <span id="slamState"></span></span></label>
+      <select id="mapList"></select>
+      <div class="btnRow">
+        <button id="mSave">Сохранить</button><button id="mSaveAs">Сохранить как…</button>
+      </div>
+      <div class="btnRow">
+        <button id="mLoad">Загрузить</button><button id="mNew">Новая</button><button id="mDel">Удалить</button>
+      </div>
+      <div id="mapMsg" class="hint">Карта сохраняется автоматически раз в минуту.</div>
     </section>
   </div>
 </main>
@@ -187,12 +212,31 @@ function render() {
   if (!camOk && $("cam").src) $("cam").removeAttribute("src");
   $("mapTitle").textContent = s.map ? "Карта · SLAM" : (s.pose_frame === "odom" ? "Одометрия (карты пока нет)" : "Карта");
   if (s.map && s.map.version !== mapVersion) loadMap(s.map);
+  if (s.access && s.access.version !== accessVersion) loadAccess(s.access);
+  const [mname, mstate] = (s.map_status || "|").split("|");
+  if (mname) $("activeMap").textContent = mname;
+  $("slamState").textContent = mstate === "running" ? "" : "(SLAM перезапускается)";
   drawMap();
 }
 
 // ---------------------------------------------------------------- map
 const cv = $("map"), ctx = cv.getContext("2d");
 let scale = 60, center = { x: 0, y: 0 }, followRobot = true, mapImg = null, mapMeta = null, mapVersion = null;
+let accessImg = null, accessMeta = null, accessVersion = null, showAccess = true;
+function loadAccess(meta) {
+  accessVersion = meta.version;
+  const img = new Image();
+  img.onload = () => { accessImg = img; accessMeta = meta; drawMap(); };
+  img.src = "/api/access.png?v=" + meta.version;
+}
+function drawGridImage(img, meta) {
+  const [sx, sy] = toScreen(meta.origin[0], meta.origin[1] + meta.height * meta.resolution);
+  ctx.drawImage(img, sx, sy, meta.width * meta.resolution * scale, meta.height * meta.resolution * scale);
+}
+function toWorld(clientX, clientY) {
+  const r = cv.getBoundingClientRect();
+  return { x: center.x + (clientX - r.left - r.width / 2) / scale, y: center.y - (clientY - r.top - r.height / 2) / scale };
+}
 function loadMap(meta) {
   mapVersion = meta.version;
   const img = new Image();
@@ -222,6 +266,7 @@ function drawMap() {
     ctx.drawImage(mapImg, sx, sy, mapMeta.width * mapMeta.resolution * scale, mapMeta.height * mapMeta.resolution * scale);
     ctx.globalAlpha = 1;
   }
+  if (showAccess && accessImg && accessMeta) drawGridImage(accessImg, accessMeta);
   // 1 m grid
   ctx.strokeStyle = "rgba(255,255,255,0.07)"; ctx.lineWidth = 1;
   const x0 = Math.floor(center.x - r.width / 2 / scale), x1 = Math.ceil(center.x + r.width / 2 / scale);
@@ -252,16 +297,84 @@ function drawMap() {
   ctx.strokeStyle = "#4c8dff"; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(hx, hy); ctx.stroke();
   ctx.fillStyle = "#4c8dff"; ctx.beginPath(); ctx.arc(ax, ay, 4, 0, 2 * Math.PI); ctx.fill();
+  if (poseDrag) {
+    const [px, py] = toScreen(poseDrag.x, poseDrag.y);
+    const [qx, qy] = toScreen(poseDrag.x + 0.8 * Math.cos(poseDrag.th), poseDrag.y + 0.8 * Math.sin(poseDrag.th));
+    ctx.strokeStyle = "#f0b429"; ctx.fillStyle = "#f0b429"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 6, 0, 2 * Math.PI); ctx.fill();
+  }
 }
-let drag = null;
-cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); });
+let drag = null, poseMode = false, poseDrag = null;
+cv.addEventListener("pointerdown", (e) => {
+  cv.setPointerCapture(e.pointerId);
+  if (poseMode) { const w = toWorld(e.clientX, e.clientY); poseDrag = { x: w.x, y: w.y, th: robotPose().th, sx: e.clientX, sy: e.clientY }; drawMap(); return; }
+  drag = { x: e.clientX, y: e.clientY };
+});
 cv.addEventListener("pointermove", (e) => {
+  if (poseDrag) {
+    if (Math.hypot(e.clientX - poseDrag.sx, e.clientY - poseDrag.sy) > 10) {
+      const w = toWorld(e.clientX, e.clientY); poseDrag.th = Math.atan2(w.y - poseDrag.y, w.x - poseDrag.x);
+    }
+    drawMap(); return;
+  }
   if (!drag) return;
   followRobot = false; $("follow").classList.remove("on");
   center.x -= (e.clientX - drag.x) / scale; center.y += (e.clientY - drag.y) / scale;
   drag = { x: e.clientX, y: e.clientY }; drawMap();
 });
-cv.addEventListener("pointerup", () => { drag = null; });
+cv.addEventListener("pointerup", async () => {
+  drag = null;
+  if (!poseDrag) return;
+  const p = poseDrag;
+  setPoseMode(false);
+  if (confirm("Робот стоит здесь, нос по стрелке? SLAM перезапустится на ~5 с.")) {
+    await mapCmd("set_pose", "", [p.x, p.y, p.th]);
+  }
+  poseDrag = null; drawMap();
+});
+function setPoseMode(on) {
+  poseMode = on; $("poseBtn").classList.toggle("on", on); $("poseHint").classList.toggle("show", on);
+  cv.style.cursor = on ? "crosshair" : "grab";
+}
+$("poseBtn").onclick = () => setPoseMode(!poseMode);
+$("accessBtn").onclick = () => { showAccess = !showAccess; $("accessBtn").classList.toggle("on", showAccess); drawMap(); };
+
+// ---------------------------------------------------------------- maps
+const MAP_BTNS = ["mSave", "mSaveAs", "mLoad", "mNew", "mDel"];
+function mapMsg(text, bad) { $("mapMsg").textContent = text; $("mapMsg").classList.toggle("bad", !!bad); }
+function fillMaps(res) {
+  const sel = $("mapList"), keep = sel.value;
+  sel.innerHTML = "";
+  for (const m of res.maps || []) {
+    const o = document.createElement("option"); o.value = m; o.textContent = m + (m === res.active ? "  (активная)" : "");
+    sel.appendChild(o);
+  }
+  sel.value = (res.maps || []).includes(keep) ? keep : res.active;
+  if (res.active) $("activeMap").textContent = res.active;
+}
+async function mapCmd(command, name = "", pose = []) {
+  MAP_BTNS.forEach((id) => { $(id).disabled = true; });
+  mapMsg("выполняю…");
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 45000);
+  try {
+    const r = await fetch("/api/map", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command, name, pose }), signal: ctl.signal });
+    const res = await r.json();
+    if (r.ok && "maps" in res) fillMaps(res);
+    mapMsg(res.success ? "готово: " + res.message : "ошибка: " + (res.message || res.error), !res.success);
+    return res;
+  } catch (e) { mapMsg("нет ответа от робота", true); return null; }
+  finally { clearTimeout(t); MAP_BTNS.forEach((id) => { $(id).disabled = false; }); }
+}
+async function refreshMaps() {
+  try { const r = await fetch("/api/maps", { cache: "no-store" }); fillMaps(await r.json()); } catch (e) { mapMsg("список карт недоступен", true); }
+}
+$("mSave").onclick = () => mapCmd("save");
+$("mSaveAs").onclick = () => { const n = prompt("Имя карты (латиница, цифры, . _ -)"); if (n) mapCmd("save_as", n.trim()); };
+$("mLoad").onclick = () => { const n = $("mapList").value; if (n && confirm("Загрузить карту «" + n + "»? Текущая будет сохранена. Робот должен стоять там, где был на этой карте, иначе нажмите «Я здесь».")) mapCmd("load", n); };
+$("mNew").onclick = () => { if (confirm("Начать новую карту? Текущая будет сохранена.")) mapCmd("new"); };
+$("mDel").onclick = () => { const n = $("mapList").value; if (n && confirm("Удалить карту «" + n + "» безвозвратно?")) mapCmd("delete", n); };
 cv.addEventListener("wheel", (e) => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2); }, { passive: false });
 function zoom(k) { scale = Math.min(400, Math.max(8, scale * k)); drawMap(); }
 $("zoomIn").onclick = () => zoom(1.3);
@@ -315,7 +428,9 @@ setInterval(() => {
   if (cmd) post("/api/teleop", cmd, 300);
 }, 100);
 
-resize(); poll();
+resize(); poll(); refreshMaps();
+// map_manager may still be starting when the page opens: retry until the list arrives, then keep it fresh
+setInterval(() => { if (!$("mapList").options.length || Math.random() < 0.2) refreshMaps(); }, 5000);
 </script>
 </body>
 </html>

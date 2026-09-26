@@ -25,3 +25,18 @@ def occupancy_to_image(data: Sequence[int], width: int, height: int) -> np.ndarr
     img[grid >= 65] = OCCUPIED
     img[(grid >= 0) & (grid <= 25)] = FREE
     return np.flipud(img)
+
+
+PASSABLE_RGBA = (47, 191, 113, 70)     # green, translucent: the robot fits here
+TURNABLE_RGBA = (47, 191, 113, 140)    # stronger green: room for a tank turn
+
+
+def access_to_rgba(data: Sequence[int], width: int, height: int) -> np.ndarray:
+    """map_accessible (60 passable, 100 turnable) → BGRA image for cv2.imencode, top row = max y."""
+    if len(data) != width * height:
+        raise ValueError(f"grid size mismatch: {len(data)} cells for {width}x{height}")
+    grid = np.asarray(data, dtype=np.int16).reshape(height, width)
+    img = np.zeros((height, width, 4), dtype=np.uint8)
+    for value, (r, g, b, a) in ((60, PASSABLE_RGBA), (100, TURNABLE_RGBA)):
+        img[grid == value] = (b, g, r, a)
+    return np.flipud(img)

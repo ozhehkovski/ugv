@@ -1,4 +1,4 @@
-"""Full robot for manual floor tests: base (drivers + EKF + safety) + live SLAM map + web panel.
+"""Full robot: base (drivers + EKF + safety) + persistent SLAM map + accessible terrain + web panel.
 
 Web panel: http://<robot-ip>:8090
 """
@@ -26,9 +26,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("use_slam", default_value="true"),
         DeclareLaunchArgument("webui_port", default_value="8090"),
         base,
-        Node(package="slam_toolbox", executable="async_slam_toolbox_node", name="slam_toolbox", output="screen",
+        # map_manager starts/restarts slam_toolbox itself and keeps the map across restarts
+        Node(package="ugv_mapping", executable="map_manager", name="map_manager", output="screen",
              condition=IfCondition(use_slam),
-             parameters=[os.path.join(pkg, "config", "slam_toolbox.yaml")]),
+             parameters=[{"slam_params": os.path.join(pkg, "config", "slam_toolbox.yaml")}]),
+        Node(package="ugv_mapping", executable="accessibility", name="accessibility", output="screen",
+             condition=IfCondition(use_slam)),
         Node(package="ugv_webui", executable="webui", name="webui", output="screen",
              parameters=[{"port": LaunchConfiguration("webui_port")}]),
     ])

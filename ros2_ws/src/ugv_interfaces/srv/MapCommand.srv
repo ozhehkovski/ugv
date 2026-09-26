@@ -1,0 +1,16 @@
+# Map manager command.
+#   list                       → maps, active
+#   save                       serialize the active map now
+#   save_as  name              copy the current map under a new name and make it active
+#   load     name [pose]       restart SLAM from a stored map at pose (x, y, theta) or its last pose
+#   new                        start a fresh map (auto-named)
+#   set_pose pose              the robot was carried: restart SLAM on the active map at pose (x, y, theta)
+#   delete   name              remove a stored map (not the active one)
+string command
+string name
+float64[] pose
+---
+bool success
+string message
+string[] maps
+string active

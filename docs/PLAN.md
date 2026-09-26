@@ -65,11 +65,16 @@
 - [x] Straight 3 m: 5 cm (≈0.9°) along the parquet; IMU heading change +0.20° after the braking fix.
 - [ ] EKF: fuses wheel vx + IMU yaw/vyaw. Revisit if SLAM shows drift on long loops.
 
-### 3. Maps
-- [ ] slam_toolbox, lifelong mode: save the pose graph, load it at start, keep mapping.
-- [ ] Map manager service: save / load / list maps.
-- [ ] Accessible-terrain layer: cells reachable with the real footprint.
-- [ ] Frontier exploration (explore_lite).
+### 3. Maps (persistence ✅, accessibility ✅, exploration → after stage 4)
+- [x] `map_manager` owns slam_toolbox. It continues the active map at start (map_file_name + last pose), stores the pose every 2 s,
+  autosaves every 60 s and on stop (systemd KillMode=mixed, so the save happens before slam_toolbox stops).
+  Verified: drove 1.31 m, restarted the service → pose (1.342, 0.051) → (1.328, 0.062), same map continued.
+- [x] Map commands (ugv_interfaces/MapCommand): list / save / save_as / load / new / set_pose / delete. All verified through the web panel API.
+- [x] Accessible-terrain layer `map_accessible`: passable ≥ 0.33 m from obstacles, tank-turn room ≥ 0.67 m,
+  only cells reachable from the robot. Unknown speckles between lidar rays are closed (≤10 cm); big unexplored areas are excluded.
+- [x] Web panel: accessibility overlay, «Карты» panel, «Я здесь» (click + drag on the map sets the robot pose).
+- [ ] Frontier exploration (needs Nav2, stage 4).
+- [ ] Teleop mux timeout 0.5 → 0.3 s: a lost release message adds up to 0.5 s × speed of travel.
 
 ### 4. Navigation
 - [ ] Nav2 with the rectangular footprint. Controller: MPPI (DiffDrive), with the footprint critic.
