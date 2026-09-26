@@ -24,6 +24,8 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray
 from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
+from std_srvs.srv import SetBool
 from geometry_msgs.msg import PolygonStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
@@ -97,9 +99,14 @@ class WebUi(Node):
         self.create_subscription(CompressedImage, "camera/image/compressed", self._on_image, qos_profile_sensor_data)
         self.create_subscription(OccupancyGrid, "map", self._on_map, LATCHED)
         self.create_subscription(OccupancyGrid, "map_accessible", self._on_access, LATCHED)
-        self.create_subscription(String, "map_manager/status", self._on_map_status, 10)
+        self.create_subscription(String, "map_manager/status", self._on_map_status, LATCHED)
         self.map_cli = self.create_client(MapCommand, "map_manager/command")
         self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        # cancel ALL navigation goals, whoever sent them (explorer, future follow/fleet nodes)
+        self.cancel_all_cli = self.create_client(CancelGoal, "navigate_to_pose/_action/cancel_goal")
+        self.explore_cli = self.create_client(SetBool, "explorer/enable")
+        self.explore_status = ""
+        self.create_subscription(String, "explorer/status", self._on_explore_status, LATCHED)
         self.create_subscription(Path, "plan", self._on_plan, 10)
         self.create_subscription(LaserScan, "scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(PolygonStamped, "footprint", self._on_footprint, 1)
@@ -204,14 +211,47 @@ class WebUi(Node):
             self.plan = []
         self.get_logger().info(f"web: navigation {self.nav['state']}")
 
-    def nav_cancel(self, reason: str) -> None:
+    def nav_cancel(self, reason: str, force: bool = False) -> None:
+        """Stop exploration and cancel every navigation goal (not only the panel's own).
+        force=False (manual driving, called at 10 Hz): only when something is actually navigating."""
+        with self.lock:
+            busy = (self.nav_handle is not None or self.nav["state"] in ("sending", "active")
+                    or self.explore_status.startswith(("exploring", "exploration complete")))
+        if not (force or busy):
+            return
+        if self.explore_cli.service_is_ready():
+            self.explore_cli.call_async(SetBool.Request(data=False))
+        if self.cancel_all_cli.service_is_ready():
+            self.cancel_all_cli.call_async(CancelGoal.Request())   # zero goal id + zero stamp = all goals
         with self.lock:
             handle = self.nav_handle
+            active = handle is not None or self.explore_status.startswith(("exploring", "exploration complete"))
         if handle is not None:
             handle.cancel_goal_async()
+        if active:
             self.get_logger().info(f"web: navigation canceled ({reason})")
             with self.lock:
                 self.nav["message"] = reason
+
+    def _on_explore_status(self, msg: String) -> None:
+        with self.lock:
+            self.explore_status = msg.data
+
+    def explore(self, on: bool) -> dict[str, Any]:
+        if on and self.estop:
+            return {"success": False, "message": "снимите аварийный стоп"}
+        if not self.explore_cli.wait_for_service(timeout_sec=2.0):
+            return {"success": False, "message": "исследование недоступно"}
+        if on:
+            self.gate.cancel()
+        fut = self.explore_cli.call_async(SetBool.Request(data=on))
+        deadline = time.monotonic() + 5.0
+        while not fut.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not fut.done():
+            return {"success": False, "message": "нет ответа"}
+        res = fut.result()
+        return {"success": res.success, "message": res.message}
 
     def _on_map_status(self, msg: String) -> None:
         with self.lock:
@@ -312,7 +352,7 @@ class WebUi(Node):
     def set_estop(self, engage: bool) -> None:
         if engage:
             self.gate.cancel()
-            self.nav_cancel("аварийный стоп")     # never resume a goal after the stop is released
+            self.nav_cancel("аварийный стоп", force=True)   # never resume a goal after the stop is released
         self.estop_pub.publish(Bool(data=engage))
         with self.lock:
             self.estop = engage
@@ -341,6 +381,7 @@ class WebUi(Node):
                 "access": self.access_meta,
                 "map_status": self.map_status,
                 "nav": dict(self.nav),
+                "explore": self.explore_status,
                 "plan": self.plan,
             }
 
@@ -412,8 +453,11 @@ class WebUi(Node):
                             raise ValueError("pose must be [x, y, theta]")
                         self._json(ui.nav_goal(*(float(v) for v in pose)))
                         return
+                    elif self.path == "/api/explore":
+                        self._json(ui.explore(bool(body["on"])))
+                        return
                     elif self.path == "/api/goal/cancel":
-                        ui.nav_cancel("отменено оператором")
+                        ui.nav_cancel("отменено оператором", force=True)
                     elif self.path == "/api/teleop":
                         if ui.estop:
                             self._json({"error": "estop engaged"}, 409)

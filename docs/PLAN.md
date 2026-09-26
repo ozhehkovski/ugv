@@ -91,7 +91,12 @@
 - [x] Bug found: the heading-hold correction was added after the angular limit (0.97 rad/s measured, cap 0.9) → clamped again.
 - [x] Web panel: «Цель» (click + drag), planned path, nav status, «Отменить поездку».
   STOP cancels the goal (verified: no resume after release). Manual driving cancels the goal.
-- [ ] Autonomous frontier exploration on the accessibility layer.
+- [x] Autonomous frontier exploration (`explorer`): frontiers = reachable cells next to unexplored space (specks < 0.1 m² ignored),
+  goal = a TURNABLE cell of the cluster, Nav2 goals, failed/stuck (30 s without 10 cm progress)/timed-out goals blacklisted,
+  done → save the map and return to the start. STOP / manual driving cancel ALL nav goals (including the explorer's) and stop exploring.
+  First run 2026-09-26: 11 m driven, map 204×135 → 314×165 cells. It then drove into a narrow dead-end hallway it could not turn in
+  → goals must now be in tank-turn room.
+- [ ] Rerun exploration after the dead-end fix; consider reverse planning (Lattice allow_reverse_expansion) for tight spots.
 - [ ] Waypoints / patrol route.
 
 ### 5. Follow-me

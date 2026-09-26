@@ -128,6 +128,9 @@
       <div class="btnRow">
         <button id="mLoad">Загрузить</button><button id="mNew">Новая</button><button id="mDel">Удалить</button>
       </div>
+      <div class="btnRow">
+        <button id="exploreBtn" title="Робот сам объедет всё, куда может проехать, достроит карту и вернётся">Исследовать автоматически</button>
+      </div>
       <div id="mapMsg" class="hint">Карта сохраняется автоматически раз в минуту.</div>
     </section>
   </div>
@@ -224,8 +227,20 @@ function render() {
   let nextra = nav.state === "active" && nav.remaining !== null ? " · осталось " + nav.remaining.toFixed(1) + " м" : "";
   if (nav.recoveries) nextra += " · манёвров " + nav.recoveries;
   if (nav.state === "canceled" && nav.message) nextra += " (" + nav.message + ")";
-  chip("cNav", ncls, ntxt + nextra);
-  $("cancelBtn").style.display = (nav.state === "active" || nav.state === "sending") ? "" : "none";
+  const ex = s.explore || "";
+  const exploring = ex.startsWith("exploring") || ex.startsWith("exploration complete");
+  const EX = [["exploring", "исследую"], ["exploration complete: returning", "исследование завершено, возвращаюсь"],
+    ["done: map explored, back", "карта изучена, вернулся на старт"], ["done: map explored", "карта изучена"],
+    ["stopped by operator", "исследование остановлено"], ["stopped: goal canceled", "исследование прервано (СТОП / ручное)"],
+    ["stopped:", "исследование остановлено"]];
+  if (exploring) chip("cNav", "ok", "<b>" + (EX.find(([k]) => ex.startsWith(k)) || [0, ex])[1] + "</b>" + (ex.includes("goal ") ? " · " + ex.split(": ")[1] : ""));
+  else chip("cNav", ncls, ntxt + nextra);
+  $("exploreBtn").textContent = exploring ? "Остановить исследование" : "Исследовать автоматически";
+  $("exploreBtn").classList.toggle("on", exploring);
+  if (!exploring && ex && ex !== "idle" && $("mapMsg").dataset.last !== ex) {
+    $("mapMsg").dataset.last = ex; mapMsg((EX.find(([k]) => ex.startsWith(k)) || [0, ex])[1]);
+  }
+  $("cancelBtn").style.display = (nav.state === "active" || nav.state === "sending" || exploring) ? "" : "none";
   const [mname, mstate] = (s.map_status || "|").split("|");
   if (mname) $("activeMap").textContent = mname;
   $("slamState").textContent = mstate === "running" ? "" : "(SLAM перезапускается)";
@@ -382,6 +397,17 @@ async function sendGoal(p) {
   } catch (e) { alert("Нет ответа от робота"); } finally { clearTimeout(t); }
 }
 $("cancelBtn").onclick = () => post("/api/goal/cancel", {});
+$("exploreBtn").onclick = async () => {
+  const on = !$("exploreBtn").classList.contains("on");
+  if (on && !confirm("Робот поедет сам исследовать всё, куда может проехать, потом вернётся на старт. Следите за ним, кнопка СТОП остановит исследование.")) return;
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch("/api/explore", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on }), signal: ctl.signal });
+    const res = await r.json();
+    if (!res.success) alert("Не получилось: " + (res.message || res.error));
+  } catch (e) { alert("Нет ответа от робота"); } finally { clearTimeout(t); }
+};
 $("accessBtn").onclick = () => { showAccess = !showAccess; $("accessBtn").classList.toggle("on", showAccess); drawMap(); };
 
 // ---------------------------------------------------------------- maps

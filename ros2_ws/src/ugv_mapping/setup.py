@@ -21,6 +21,7 @@ setup(
         "console_scripts": [
             "map_manager = ugv_mapping.map_manager_node:main",
             "accessibility = ugv_mapping.accessibility_node:main",
+            "explorer = ugv_mapping.explorer_node:main",
         ],
     },
 )

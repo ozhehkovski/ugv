@@ -24,6 +24,7 @@ import rclpy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from slam_toolbox.srv import SaveMap, SerializePoseGraph
@@ -69,7 +70,9 @@ class MapManager(Node):
         self.tfl = TransformListener(self.tf, self)
         self.serialize_cli = self.create_client(SerializePoseGraph, "/slam_toolbox/serialize_map", callback_group=cb)
         self.save_img_cli = self.create_client(SaveMap, "/slam_toolbox/save_map", callback_group=cb)
-        self.status_pub = self.create_publisher(String, "~/status", 10)
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.status_pub = self.create_publisher(String, "~/status", latched)
+        self.create_timer(5.0, self._publish_status, callback_group=cb)
         self.create_service(MapCommand, "~/command", self._on_command, callback_group=cb)
         self.create_timer(float(gp("pose_period").value), self._pose_tick, callback_group=cb)
         self.create_timer(float(gp("autosave_period").value), self._autosave_tick, callback_group=cb)
