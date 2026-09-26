@@ -42,10 +42,11 @@ class Tester:
         self.pts: list[tuple[float, float]] = []
         self.cmd_out = (0.0, 0.0)
         self.gyro_z = math.nan
+        self.imu_yaw = math.nan
         self.n.create_subscription(Odometry, "/odom", self._odom, 10)
         self.n.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.n.create_subscription(Twist, "/cmd_vel_safe", lambda m: setattr(self, "cmd_out", (m.linear.x, m.angular.z)), 10)
-        self.n.create_subscription(Imu, "/imu/data", lambda m: setattr(self, "gyro_z", m.angular_velocity.z), 20)
+        self.n.create_subscription(Imu, "/imu/data", self._imu, 20)
         self.pub = self.n.create_publisher(Twist, "/cmd_vel/teleop", 10)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.estop = self.n.create_publisher(Bool, "/estop", latched)
@@ -57,6 +58,10 @@ class Tester:
         p = m.pose.pose
         self.pose = (p.position.x, p.position.y, yaw_of(p.orientation))
         self.v, self.w = m.twist.twist.linear.x, m.twist.twist.angular.z
+
+    def _imu(self, m: Imu) -> None:
+        self.gyro_z = m.angular_velocity.z
+        self.imu_yaw = yaw_of(m.orientation)
 
     def _scan(self, m: LaserScan) -> None:
         try:
@@ -116,6 +121,7 @@ class Tester:
         p0, t0, nxt = self.pose, time.monotonic(), 0.0
         th0 = self.pose[2]
         m0 = self.map_pose()
+        yaw0 = self.imu_yaw
         print(f"BRAKE v={v} run={run_m} m, start front_gap={self.front_gap():.2f}")
         while self.dist_from(p0) < run_m:
             t = time.monotonic() - t0
@@ -142,6 +148,8 @@ class Tester:
         dth = math.degrees(math.atan2(math.sin(self.pose[2] - th0), math.cos(self.pose[2] - th0)))
         lateral = -math.sin(th0) * (self.pose[0] - p0[0]) + math.cos(th0) * (self.pose[1] - p0[1])
         print(f"HEADING drift {dth:+.1f}° (wheel odom), lateral offset {lateral * 100:+.1f} cm")
+        dimu = math.degrees(math.atan2(math.sin(self.imu_yaw - yaw0), math.cos(self.imu_yaw - yaw0)))
+        print(f"IMU    heading change {dimu:+.2f}° (BNO085 game rotation vector, + = left)")
         self.spin(1.5)                       # let SLAM process the last scans
         m1 = self.map_pose()
         if m0 and m1:

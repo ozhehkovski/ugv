@@ -39,6 +39,7 @@ from .heading_hold import HeadingHold
 from .robot_config import load_robot_config
 
 STOPPED_MPS = 0.03  # below this a wheel counts as stopped (release the brake)
+HOLD_MIN_SPEED = 0.02  # m/s: keep heading hold active while still rolling faster than this
 
 
 @dataclass
@@ -246,9 +247,11 @@ class VescDriver(Node):
             return
         self._state = "ok"
         v, w = self.limiter.step(v_t, w_t, dt)
-        # swinging casters push the robot off course: hold the commanded yaw rate on the gyro
+        # swinging casters push the robot off course: hold the commanded yaw rate on the gyro,
+        # also while decelerating after the command is released (casters swing when braking too)
         moving_cmd = abs(v_t) > 1e-3 or abs(w_t) > 1e-3
-        hold_on = self.heading_hold_on and gyro_fresh and moving_cmd
+        coasting = abs(v) > HOLD_MIN_SPEED
+        hold_on = self.heading_hold_on and gyro_fresh and (moving_cmd or coasting)
         w += self.heading_hold.update(w, gyro_z, dt, hold_on)
         wl, wr = body_to_wheels(v, w, self.track, self.limits.max_wheel_speed)
         if abs(v_t) > 1e-3 or abs(w_t) > 1e-3:      # only while a motion is requested, never when stopping

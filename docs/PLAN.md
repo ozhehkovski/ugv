@@ -33,7 +33,10 @@
 - [x] Heading hold on the floor: reverse 0.9 m at 0.2 m/s → −0.5°, 0.6 cm lateral; forward 0.75 m at 0.3 m/s → 0.0°, −1.2 cm (wheel odometry).
   Turn by 75° → 74.5°.
   3 m run along a tape line at 0.3 m/s (2026-09-26): odometry +1.9°, 2.9 cm left. SLAM +0.6°, 20 cm left.
-  The SLAM figure is inconsistent: a long open corridor is degenerate for scan matching. Tape measurement: pending.
+  The SLAM figure is inconsistent: a long open corridor is degenerate for scan matching.
+  Tape runs 1–2 read ~15 cm left, but the IMU showed +0.03° → the tape was crooked.
+  Run 3 along the parquet: **5 cm left over 3.16 m (≈0.9°)**. IMU −1.07°, most of it during braking,
+  when the hold was off → heading hold now stays active while rolling faster than 0.02 m/s.
 - [x] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
   - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
   - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
