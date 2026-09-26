@@ -13,9 +13,10 @@ chassis:
   footprint_padding: 0.03   # safety margin added around the body for collision checks
 
 wheels:
-  radius: 0.0825            # Ø165 mm hub motors
+  radius: 0.0870            # effective rolling radius: lidar-calibrated 2026-09-26 (scale 1.055 vs 0.0825, two runs)
   width: 0.045
-  track: 0.515              # wheel center ↔ wheel center. CALIBRATE with a 360° spin test
+  track: 0.484              # EFFECTIVE track: IMU-calibrated spins 2026-09-26 (±360°, ±180°: 0.4836–0.4856);
+                            # IMU yaw cross-checked against SLAM (186.9° vs 187.0°)
   # front: two passive swivel casters (not modeled in kinematics)
 
 sensors:

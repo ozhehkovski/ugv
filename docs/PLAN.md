@@ -54,10 +54,16 @@
   - TODO: people need a larger margin than furniture. The stop zone ahead is 10 cm, which is fine for walls but not for feet.
 - [ ] Measure the real track width (center to center) and check it with a 360° spin.
 
-### 2. Localization
-- [ ] Calibrate the EKF (wheel odometry + BNO085). With casters the wheel yaw is usable, so consider fusing vyaw.
-- [ ] Check lidar orientation (object in front → bearing 0°) and IMU yaw sign.
-- [ ] Drift test: 5 m straight, 360° spin.
+### 2. Localization ✅ 2026-09-26
+- [x] Wheel radius, lidar-calibrated on straight runs toward a bookshelf (`scripts/calibrate.py distance`):
+  scale 1.0549 (2.5 m reverse) and 1.0559 (2.3 m forward) → **r = 0.087 m** (was 0.0825).
+  Before this fix the hard cap of 0.55 m/s was really ≈0.58 m/s (2.1 km/h) — now correct.
+- [x] Effective track, IMU-calibrated spins (`calibrate.py spin`): ±360° and ±180° → 0.4832–0.4856 → **0.484 m** (was 0.515).
+  IMU yaw independently confirmed by SLAM: 186.9° vs 187.0°. After the fix: wheels 186.6° / IMU 186.4° / SLAM 186.5°.
+- [x] IMU: gyro bias at rest 0.0000 rad/s (σ 0.0003), yaw drift 0 °/min over 15 s; yaw sign (+z = CCW) confirmed.
+- [x] Lidar orientation: obstacles ahead are seen ahead (approach test stopped at the shelf in front).
+- [x] Straight 3 m: 5 cm (≈0.9°) along the parquet; IMU heading change +0.20° after the braking fix.
+- [ ] EKF: fuses wheel vx + IMU yaw/vyaw. Revisit if SLAM shows drift on long loops.
 
 ### 3. Maps
 - [ ] slam_toolbox, lifelong mode: save the pose graph, load it at start, keep mapping.
