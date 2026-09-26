@@ -36,7 +36,8 @@ The driver enforces the hard limits on its own: 0.55 m/s (2 km/h), 0.9 rad/s and
 
 ```bash
 ./scripts/deploy.sh                                   # rsync + colcon build on the robot (UGV_HOST=luki@192.168.1.58)
-ssh luki@192.168.1.58 '~/ugv_ws/scripts/robot_up.sh start'   # base + SLAM + web panel in background; `stop` to stop, log in ~/ugv_base.log
+ssh luki@192.168.1.58 '~/ugv_ws/scripts/robot_up.sh install'  # once: systemd user service `ugv`, autostarts at boot
+ssh luki@192.168.1.58 '~/ugv_ws/scripts/robot_up.sh restart'  # after a deploy; also start|stop|status|log (log: ~/ugv_base.log)
 # open http://192.168.1.58:8090 from a phone/laptop on the same Wi-Fi
 # or in the foreground on the robot:
 ros2 launch ugv_bringup robot.launch.py        # base.launch.py = without SLAM and web panel

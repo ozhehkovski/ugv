@@ -1,0 +1,20 @@
+# UGV robot stack as a systemd USER service (no root needed).
+# Starts at boot without a login thanks to `loginctl enable-linger luki`.
+# Install: ~/ugv_ws/scripts/robot_up.sh install
+[Unit]
+Description=UGV robot stack (drivers, safety, SLAM, web panel :8090)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source %h/ugv_ws/install/setup.bash && exec ros2 launch ugv_bringup robot.launch.py'
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:%h/ugv_base.log
+StandardError=append:%h/ugv_base.log
+KillSignal=SIGINT
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

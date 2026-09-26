@@ -73,6 +73,14 @@ class Tester:
                 pts.append((tx + c * lx - s * ly, ty + s * lx + c * ly))
         self.pts = pts
 
+    def map_pose(self) -> tuple[float, float, float] | None:
+        """SLAM pose (lidar scan matching): independent of wheel odometry and gyro."""
+        try:
+            t = self.tf.lookup_transform("map", "base_footprint", Time())
+        except TransformException:
+            return None
+        return t.transform.translation.x, t.transform.translation.y, yaw_of(t.transform.rotation)
+
     def front_gap(self) -> float:
         g = sorted(x - FRONT for x, y in self.pts if x > FRONT - 0.02 and abs(y) < HALF_W + 0.03)
         return g[1] if len(g) > 1 else math.inf   # 2nd nearest: ignore a single noisy return
@@ -107,6 +115,7 @@ class Tester:
     def brake(self, v: float, run_m: float, use_estop: bool) -> None:
         p0, t0, nxt = self.pose, time.monotonic(), 0.0
         th0 = self.pose[2]
+        m0 = self.map_pose()
         print(f"BRAKE v={v} run={run_m} m, start front_gap={self.front_gap():.2f}")
         while self.dist_from(p0) < run_m:
             t = time.monotonic() - t0
@@ -133,6 +142,13 @@ class Tester:
         dth = math.degrees(math.atan2(math.sin(self.pose[2] - th0), math.cos(self.pose[2] - th0)))
         lateral = -math.sin(th0) * (self.pose[0] - p0[0]) + math.cos(th0) * (self.pose[1] - p0[1])
         print(f"HEADING drift {dth:+.1f}° (wheel odom), lateral offset {lateral * 100:+.1f} cm")
+        self.spin(1.5)                       # let SLAM process the last scans
+        m1 = self.map_pose()
+        if m0 and m1:
+            mdth = math.degrees(math.atan2(math.sin(m1[2] - m0[2]), math.cos(m1[2] - m0[2])))
+            mlat = -math.sin(m0[2]) * (m1[0] - m0[0]) + math.cos(m0[2]) * (m1[1] - m0[1])
+            mfwd = math.cos(m0[2]) * (m1[0] - m0[0]) + math.sin(m0[2]) * (m1[1] - m0[1])
+            print(f"SLAM   drift {mdth:+.1f}°, lateral offset {mlat * 100:+.1f} cm over {mfwd:.2f} m (+ = left)")
         if use_estop:
             self.estop.publish(Bool(data=False))
             self.spin(0.5)

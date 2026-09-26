@@ -1,14 +1,24 @@
 #!/bin/bash
-# Start/stop the base stack on the robot in the background: robot_up.sh start|stop [launch args]
-source /opt/ros/humble/setup.bash
-source ~/ugv_ws/install/setup.bash
-# UGV_LAUNCH selects the launch file (default robot.launch.py: base + SLAM + web panel)
-case "$1" in
-  stop)
-    [ -f ~/ugv_base.pid ] && kill -INT -- -"$(cat ~/ugv_base.pid)" 2>/dev/null
-    sleep 3; rm -f ~/ugv_base.pid; echo stopped ;;
-  start)
-    shift
-    setsid ros2 launch ugv_bringup "${UGV_LAUNCH:-robot.launch.py}" "$@" > ~/ugv_base.log 2>&1 < /dev/null &
-    echo $! > ~/ugv_base.pid; echo "started pid $(cat ~/ugv_base.pid)" ;;
+# Control the robot stack (systemd user service `ugv`, autostarts at boot).
+#   robot_up.sh install   copy the unit, enable autostart, start now
+#   robot_up.sh start|stop|restart|status
+#   robot_up.sh log       follow ~/ugv_base.log
+set -euo pipefail
+UNIT_SRC="$(dirname "$0")/systemd/ugv.service"
+case "${1:-status}" in
+  install)
+    mkdir -p ~/.config/systemd/user
+    cp "$UNIT_SRC" ~/.config/systemd/user/ugv.service
+    loginctl enable-linger "$USER"
+    systemctl --user daemon-reload
+    systemctl --user enable --now ugv.service
+    systemctl --user --no-pager status ugv.service | head -5 ;;
+  start|stop|restart)
+    systemctl --user "$1" ugv.service ;;
+  status)
+    systemctl --user --no-pager status ugv.service | head -8 ;;
+  log)
+    tail -f ~/ugv_base.log ;;
+  *)
+    echo "usage: $0 install|start|stop|restart|status|log" >&2; exit 2 ;;
 esac

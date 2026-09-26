@@ -15,7 +15,8 @@
 - [x] `robot.yaml` holds the real geometry (62×56, axle 55.5 cm from the nose, lidar 12 cm from the nose).
 - [x] URDF with a frame prefix (ready for multiple robots).
 - [x] `deploy.sh`: rsync + colcon build on the Jetson.
-- [ ] systemd unit for autostart, rosbag recording, foxglove_bridge.
+- [x] systemd user service `ugv` with autostart at boot (linger, no root), `robot_up.sh install|start|stop|restart|status|log`.
+- [ ] rosbag recording, foxglove_bridge.
 
 ### 1. Drive and safety (in progress)
 - [x] Bench test of the VESC: id65 = right, id66 = left, + = forward on both.
@@ -30,7 +31,9 @@
 - [x] Web panel (map + lidar + footprint, camera, status, joystick with dead-man, big STOP).
 - [x] Heading hold: gyro yaw-rate PI in the driver. The front casters swing and push the robot off course. Gyro sign verified (+z = CCW).
 - [x] Heading hold on the floor: reverse 0.9 m at 0.2 m/s → −0.5°, 0.6 cm lateral; forward 0.75 m at 0.3 m/s → 0.0°, −1.2 cm (wheel odometry).
-  Turn by 75° → 74.5°. TODO: a longer 3–5 m run checked against an external mark, not only odometry.
+  Turn by 75° → 74.5°.
+  3 m run along a tape line at 0.3 m/s (2026-09-26): odometry +1.9°, 2.9 cm left. SLAM +0.6°, 20 cm left.
+  The SLAM figure is inconsistent: a long open corridor is degenerate for scan matching. Tape measurement: pending.
 - [x] Test on the floor: stop distance, slow zones, the tank-turn circle near a wall.
   - 2026-09-25: stop from 0.085 m/s = 5.2 cm / 0.6 s. The front slow zone cut 0.2 → 0.08 m/s.
   - Turn next to the sofa: turning toward it was limited by approach (0.4 → 0.13 rad/s, matches the 11°-to-contact prediction).
