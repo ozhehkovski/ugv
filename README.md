@@ -49,6 +49,21 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=cmd_
 
 Emergency stop is a latched `std_msgs/Bool` on `/estop`. The web panel owns a live publisher for it. After release, the driver will not move until it sees a zero command, so a held joystick cannot make the robot jump. Publish from a process that stays alive, as `scripts/estop_test.py` does. `ros2 topic pub --once` exits before the message is delivered.
 
+## Fleet console (laptop)
+
+`console/` is a Next.js app that lets one operator run many robots:
+
+- Add a real robot by the address of its web panel, for example `http://192.168.1.58:8090`.
+- Set goals on the map, or select several robots and give them one goal.
+- Robots that need a human are listed in the "Нужен оператор" queue. For each one you can take manual control (joystick or WASD), then return it to auto mode.
+- The demo mode is a 2D simulation of 10 robots on rough terrain: forest, rocks, mud, a river with fords, a ravine and hills. The robots share positions and obstacles over a simulated mesh network, and some of them stop to act as relays that keep the chain back to the base. "Подкинуть проблему" makes one robot get stuck so you can rescue it.
+
+```bash
+pnpm --dir console install
+pnpm --dir console dev          # http://localhost:3000
+pnpm --dir console test         # swarm simulation tests
+```
+
 ## Tests
 
 ```bash
