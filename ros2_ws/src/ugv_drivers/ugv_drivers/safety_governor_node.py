@@ -16,10 +16,10 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .robot_config import load_robot_config
@@ -66,12 +66,41 @@ class SafetyGovernorNode(Node):
         self.status_pub = self.create_publisher(String, "safety_status", 10)
         self.create_subscription(LaserScan, "scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Twist, "cmd_vel_in", self._on_cmd, 10)
+        # virtual walls (map frame): obstacles the lidar cannot see (mirrors, glass)
+        self.wall_pts = np.empty((0, 2))
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Float64MultiArray, "virtual_walls/segments", self._on_walls, latched)
         # ~/escape runs for seconds: its own thread, so scans and commands keep flowing meanwhile
         self.escape_pub = self.create_publisher(Twist, "cmd_vel/escape", 10)
         self.escape_clearance = float(gp("escape_clearance").value)
         self.escape_timeout = float(gp("escape_timeout").value)
         self.create_service(Trigger, "~/escape", self._on_escape, callback_group=MutuallyExclusiveCallbackGroup())
         self.get_logger().info(f"safety_governor: body {body}, margin {self.gov.stop_margin} m, horizon {self.gov.horizon} s")
+
+    def _on_walls(self, msg: Float64MultiArray) -> None:
+        d = list(msg.data)
+        pts = []
+        for i in range(0, len(d) - 3, 4):
+            x1, y1, x2, y2 = d[i:i + 4]
+            n = max(1, int(math.ceil(math.hypot(x2 - x1, y2 - y1) / 0.025)))
+            t = np.linspace(0.0, 1.0, n + 1)
+            pts.append(np.column_stack((x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)))
+        self.wall_pts = np.vstack(pts) if pts else np.empty((0, 2))
+        self.get_logger().info(f"virtual walls: {len(d) // 4} segment(s)")
+
+    def _walls_in_base(self) -> np.ndarray:
+        if len(self.wall_pts) == 0:
+            return self.wall_pts
+        try:
+            t = self.tf.lookup_transform("map", self.base_frame, Time())
+        except TransformException:
+            return np.empty((0, 2))
+        q = t.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        c, s = math.cos(yaw), math.sin(yaw)
+        rel = self.wall_pts - np.array([t.transform.translation.x, t.transform.translation.y])
+        local = np.column_stack((c * rel[:, 0] + s * rel[:, 1], -s * rel[:, 0] + c * rel[:, 1]))
+        return local[np.hypot(local[:, 0], local[:, 1]) < 3.0]
 
     def _on_scan(self, msg: LaserScan) -> None:
         if self._laser_tf is None:
@@ -89,7 +118,8 @@ class SafetyGovernorNode(Node):
         ok = np.isfinite(r) & (r >= msg.range_min) & (r <= msg.range_max)
         lx, ly = r[ok] * np.cos(a[ok]), r[ok] * np.sin(a[ok])
         c, s = math.cos(yaw), math.sin(yaw)
-        self.points = np.column_stack((tx + c * lx - s * ly, ty + s * lx + c * ly))
+        scan_pts = np.column_stack((tx + c * lx - s * ly, ty + s * lx + c * ly))
+        self.points = np.vstack((scan_pts, self._walls_in_base()))
         self.scan_t = time.monotonic()
 
     def _on_escape(self, _req: Trigger.Request, res: Trigger.Response) -> Trigger.Response:

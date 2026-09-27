@@ -1,0 +1,8 @@
+# Virtual walls of the active map, flat list of segments in the map frame: x1, y1, x2, y2, x1, y1, ...
+#   mode "set": replace all walls · "add": append these segments
+string mode
+float64[] segments
+---
+bool success
+string message
+float64[] segments   # the resulting full list

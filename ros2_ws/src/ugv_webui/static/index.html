@@ -99,6 +99,7 @@
       <button id="accessBtn" class="on" title="Где робот проходит (зелёный) и может развернуться (ярко-зелёный)">Доступность</button>
       <button id="poseBtn" title="Робота перенесли: укажите, где он стоит">Я здесь</button>
       <button id="goalBtn" title="Поехать в точку на карте">Цель</button>
+      <button id="wallBtn" title="Нарисовать виртуальную стену (зеркало, стекло): проведите линию">Стена</button>
       <button id="cancelBtn" style="display:none;border-color:var(--warn);color:var(--warn)">Отменить поездку</button>
     </div>
     <div id="poseHint">Нажмите, где стоит робот, и протяните в сторону носа</div>
@@ -127,6 +128,9 @@
       </div>
       <div class="btnRow">
         <button id="mLoad">Загрузить</button><button id="mNew">Новая</button><button id="mDel">Удалить</button>
+      </div>
+      <div class="btnRow">
+        <button id="wallUndo">Убрать последнюю стену</button><button id="wallClear">Удалить все стены</button>
       </div>
       <div class="btnRow">
         <button id="exploreBtn" title="Робот сам объедет всё, куда может проехать, достроит карту и вернётся">Исследовать автоматически</button>
@@ -227,6 +231,9 @@ function render() {
   let nextra = nav.state === "active" && nav.remaining !== null ? " · осталось " + nav.remaining.toFixed(1) + " м" : "";
   if (nav.recoveries) nextra += " · манёвров " + nav.recoveries;
   if (nav.state === "canceled" && nav.message) nextra += " (" + nav.message + ")";
+  if (s.wall_event && $("mapMsg").dataset.bump !== s.wall_event) {
+    $("mapMsg").dataset.bump = s.wall_event; mapMsg("УДАР: поставил виртуальную стену в месте контакта", true);
+  }
   const ex = s.explore || "";
   const exploring = ex.startsWith("exploring") || ex.startsWith("exploration complete");
   const EX = [["exploring", "исследую"], ["exploration complete: returning", "исследование завершено, возвращаюсь"],
@@ -306,6 +313,16 @@ function drawMap() {
   if (!state) return;
   const c = Math.cos(p.th), s = Math.sin(p.th);
   const w = (bx, by) => toScreen(p.x + c * bx - s * by, p.y + s * bx + c * by);
+  // virtual walls (map frame): mirrors, glass
+  const W = state.walls || [];
+  if (state.pose_frame === "map" && W.length) {
+    ctx.strokeStyle = "#ff8a3d"; ctx.lineWidth = 5; ctx.lineCap = "round";
+    for (let i = 0; i + 3 < W.length; i += 4) {
+      const [a, b] = toScreen(W[i], W[i + 1]), [c, d] = toScreen(W[i + 2], W[i + 3]);
+      ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+  }
   // planned path and goal (map frame)
   if (state.plan && state.plan.length > 1 && state.pose_frame === "map") {
     ctx.strokeStyle = "rgba(76,141,255,0.9)"; ctx.lineWidth = 2.5; ctx.setLineDash([8, 5]);
@@ -337,7 +354,11 @@ function drawMap() {
   ctx.strokeStyle = "#4c8dff"; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(hx, hy); ctx.stroke();
   ctx.fillStyle = "#4c8dff"; ctx.beginPath(); ctx.arc(ax, ay, 4, 0, 2 * Math.PI); ctx.fill();
-  if (poseDrag) {
+  if (poseDrag && poseMode === "wall") {
+    const [px, py] = toScreen(poseDrag.x, poseDrag.y), [qx, qy] = toScreen(poseDrag.ex ?? poseDrag.x, poseDrag.ey ?? poseDrag.y);
+    ctx.strokeStyle = "#ff8a3d"; ctx.lineWidth = 5; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy); ctx.stroke(); ctx.lineCap = "butt";
+  } else if (poseDrag) {
     const [px, py] = toScreen(poseDrag.x, poseDrag.y);
     const [qx, qy] = toScreen(poseDrag.x + 0.8 * Math.cos(poseDrag.th), poseDrag.y + 0.8 * Math.sin(poseDrag.th));
     const col = poseMode === "goal" ? "#4c8dff" : "#f0b429";
@@ -354,8 +375,10 @@ cv.addEventListener("pointerdown", (e) => {
 });
 cv.addEventListener("pointermove", (e) => {
   if (poseDrag) {
+    const w = toWorld(e.clientX, e.clientY);
+    poseDrag.ex = w.x; poseDrag.ey = w.y;
     if (Math.hypot(e.clientX - poseDrag.sx, e.clientY - poseDrag.sy) > 10) {
-      const w = toWorld(e.clientX, e.clientY); poseDrag.th = Math.atan2(w.y - poseDrag.y, w.x - poseDrag.x);
+      poseDrag.th = Math.atan2(w.y - poseDrag.y, w.x - poseDrag.x);
     }
     drawMap(); return;
   }
@@ -369,7 +392,9 @@ cv.addEventListener("pointerup", async () => {
   if (!poseDrag) return;
   const p = poseDrag, mode = poseMode;
   setPoseMode(false);
-  if (mode === "goal") {
+  if (mode === "wall") {
+    if (p.ex !== undefined && Math.hypot(p.ex - p.x, p.ey - p.y) > 0.1) await wallsCmd("add", [p.x, p.y, p.ex, p.ey]);
+  } else if (mode === "goal") {
     await sendGoal(p);
   } else if (confirm("Робот стоит здесь, нос по стрелке? SLAM перезапустится на ~5 с.")) {
     await mapCmd("set_pose", "", [p.x, p.y, p.th]);
@@ -379,13 +404,27 @@ cv.addEventListener("pointerup", async () => {
 function setPoseMode(mode) {
   poseMode = mode;
   $("poseBtn").classList.toggle("on", mode === "pose"); $("goalBtn").classList.toggle("on", mode === "goal");
+  $("wallBtn").classList.toggle("on", mode === "wall");
   $("poseHint").textContent = mode === "goal" ? "Нажмите, куда ехать, и протяните в сторону, куда смотреть носом"
+                            : mode === "wall" ? "Проведите линию там, где зеркало или стекло"
                                               : "Нажмите, где стоит робот, и протяните в сторону носа";
   $("poseHint").classList.toggle("show", !!mode);
   cv.style.cursor = mode ? "crosshair" : "grab";
 }
 $("poseBtn").onclick = () => setPoseMode(poseMode === "pose" ? false : "pose");
 $("goalBtn").onclick = () => setPoseMode(poseMode === "goal" ? false : "goal");
+$("wallBtn").onclick = () => setPoseMode(poseMode === "wall" ? false : "wall");
+async function wallsCmd(mode, segments) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch("/api/walls", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, segments }), signal: ctl.signal });
+    const res = await r.json();
+    mapMsg(res.success ? "стены: " + res.message : "ошибка: " + (res.message || res.error), !res.success);
+  } catch (e) { mapMsg("нет ответа от робота", true); } finally { clearTimeout(t); }
+}
+$("wallUndo").onclick = () => { const W = (state && state.walls) || []; if (W.length) wallsCmd("set", W.slice(0, -4)); };
+$("wallClear").onclick = () => { if (confirm("Удалить все виртуальные стены этой карты?")) wallsCmd("set", []); };
 async function sendGoal(p) {
   if (estop) { alert("Сначала снимите аварийный стоп"); return; }
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 5000);

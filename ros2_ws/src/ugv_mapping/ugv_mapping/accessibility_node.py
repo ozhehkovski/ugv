@@ -9,13 +9,16 @@ from __future__ import annotations
 import math
 
 import rclpy
+import numpy as np
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
+from std_msgs.msg import Float64MultiArray
 from tf2_ros import Buffer, TransformException, TransformListener
 from ugv_drivers.robot_config import load_robot_config, turn_sweep_radius
 
+from . import walls
 from .accessibility import GridInfo, accessible_layer
 
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -38,6 +41,8 @@ class AccessibilityNode(Node):
         self.tfl = TransformListener(self.tf, self)
         self.pub = self.create_publisher(OccupancyGrid, "map_accessible", LATCHED)
         self.create_subscription(OccupancyGrid, "map", self._on_map, LATCHED)
+        self.walls: list[walls.Segment] = []
+        self.create_subscription(Float64MultiArray, "virtual_walls/segments", self._on_walls, LATCHED)
         self.create_timer(1.0, self._tick)
         self.get_logger().info(
             f"accessibility: passable ≥ {self.half_width + self.margin:.2f} m, "
@@ -45,6 +50,14 @@ class AccessibilityNode(Node):
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self.map, self.dirty = msg, True
+
+    def _on_walls(self, msg: Float64MultiArray) -> None:
+        try:
+            self.walls = walls.parse_flat(list(msg.data))
+        except ValueError as exc:
+            self.get_logger().error(f"virtual walls ignored: {exc}")
+            return
+        self.dirty = True
 
     def _tick(self) -> None:
         if self.map is None:
@@ -61,7 +74,10 @@ class AccessibilityNode(Node):
         m = self.map
         info = GridInfo(m.info.width, m.info.height, m.info.resolution,
                         m.info.origin.position.x, m.info.origin.position.y)
-        layer = accessible_layer(m.data, info, xy, self.half_width, self.turn_radius, self.margin)
+        grid = np.asarray(m.data, dtype=np.int16).reshape(info.height, info.width)
+        if self.walls:     # mirrors / glass the lidar cannot see
+            grid = walls.rasterize(grid, self.walls, (info.origin_x, info.origin_y), info.resolution)
+        layer = accessible_layer(grid.ravel(), info, xy, self.half_width, self.turn_radius, self.margin)
         out = OccupancyGrid()
         out.header.stamp = self.get_clock().now().to_msg()
         out.header.frame_id = m.header.frame_id

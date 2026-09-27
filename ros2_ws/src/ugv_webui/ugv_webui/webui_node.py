@@ -37,7 +37,9 @@ from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from ugv_interfaces.srv import MapCommand
+from nav2_msgs.srv import ClearEntireCostmap
+from std_msgs.msg import Float64MultiArray
+from ugv_interfaces.srv import MapCommand, SetWalls
 
 from .map_render import access_to_rgba, occupancy_to_image
 from .teleop_gate import TeleopGate
@@ -101,6 +103,13 @@ class WebUi(Node):
         self.create_subscription(OccupancyGrid, "map_accessible", self._on_access, LATCHED)
         self.create_subscription(String, "map_manager/status", self._on_map_status, LATCHED)
         self.map_cli = self.create_client(MapCommand, "map_manager/command")
+        self.walls: list[float] = []
+        self.wall_event = ""
+        self.walls_cli = self.create_client(SetWalls, "virtual_walls/set")
+        self.clear_clis = [self.create_client(ClearEntireCostmap, n) for n in (
+            "global_costmap/clear_entirely_global_costmap", "local_costmap/clear_entirely_local_costmap")]
+        self.create_subscription(Float64MultiArray, "virtual_walls/segments", self._on_walls, LATCHED)
+        self.create_subscription(String, "virtual_walls/events", self._on_wall_event, 10)
         self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
         # cancel ALL navigation goals, whoever sent them (explorer, future follow/fleet nodes)
         self.cancel_all_cli = self.create_client(CancelGoal, "navigate_to_pose/_action/cancel_goal")
@@ -264,6 +273,30 @@ class WebUi(Node):
         res = fut.result()
         return {"success": res.success, "message": res.message}
 
+    def _on_walls(self, msg: Float64MultiArray) -> None:
+        with self.lock:
+            self.walls = [round(v, 3) for v in msg.data]
+
+    def _on_wall_event(self, msg: String) -> None:
+        with self.lock:
+            self.wall_event = msg.data
+
+    def set_walls(self, mode: str, segments: list[float]) -> dict[str, Any]:
+        if not self.walls_cli.wait_for_service(timeout_sec=2.0):
+            return {"success": False, "message": "virtual_walls недоступен"}
+        fut = self.walls_cli.call_async(SetWalls.Request(mode=mode, segments=[float(v) for v in segments]))
+        deadline = time.monotonic() + 5.0
+        while not fut.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not fut.done():
+            return {"success": False, "message": "нет ответа"}
+        res = fut.result()
+        if res.success:   # removed walls must disappear from the costmaps too (they are never cleared by scans)
+            for cli in self.clear_clis:
+                if cli.service_is_ready():
+                    cli.call_async(ClearEntireCostmap.Request())
+        return {"success": res.success, "message": res.message, "segments": list(res.segments)}
+
     def _on_map_status(self, msg: String) -> None:
         with self.lock:
             self.map_status = msg.data
@@ -393,6 +426,8 @@ class WebUi(Node):
                 "map_status": self.map_status,
                 "nav": dict(self.nav),
                 "explore": self.explore_status,
+                "walls": self.walls,
+                "wall_event": self.wall_event,
                 "plan": self.plan,
             }
 
@@ -463,6 +498,12 @@ class WebUi(Node):
                         if not isinstance(pose, list) or len(pose) != 3:
                             raise ValueError("pose must be [x, y, theta]")
                         self._json(ui.nav_goal(*(float(v) for v in pose)))
+                        return
+                    elif self.path == "/api/walls":
+                        segs = body.get("segments", [])
+                        if not isinstance(segs, list) or len(segs) % 4:
+                            raise ValueError("segments must be a flat list x1, y1, x2, y2, ...")
+                        self._json(ui.set_walls(str(body.get("mode", "set")), segs))
                         return
                     elif self.path == "/api/explore":
                         self._json(ui.explore(bool(body["on"])))

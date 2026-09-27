@@ -22,6 +22,7 @@ setup(
             "map_manager = ugv_mapping.map_manager_node:main",
             "accessibility = ugv_mapping.accessibility_node:main",
             "explorer = ugv_mapping.explorer_node:main",
+            "virtual_walls = ugv_mapping.virtual_walls_node:main",
         ],
     },
 )

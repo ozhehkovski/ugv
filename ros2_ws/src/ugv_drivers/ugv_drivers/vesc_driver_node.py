@@ -17,14 +17,15 @@ from dataclasses import dataclass
 import rclpy
 import serial
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PointStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32MultiArray
 
 from . import vesc_protocol as vp
+from .bump import BumpConfig, BumpDetector, contact_point
 from .diff_drive import (
     DriveLimits,
     Odometry2D,
@@ -91,6 +92,19 @@ class VescDriver(Node):
             max_heading_error=float(hh.get("max_heading_error", 0.35)))
         self._gyro_z = 0.0
         self._gyro_t = -math.inf
+        self._accel_x: float | None = None
+        bc = dt_cfg.get("bump", {})
+        self.bump_on = bool(bc.get("enabled", False))
+        self.bump_hold = float(bc.get("hold", 1.0))
+        self.bump = BumpDetector(BumpConfig(
+            stall_current=float(bc.get("stall_current", 3.0)), stall_time=float(bc.get("stall_time", 0.4)),
+            stall_ratio=float(bc.get("stall_ratio", 0.3)), impact_accel=float(bc.get("impact_accel", 0.0))))
+        self._bump_until = -math.inf
+        ch = cfg["chassis"]
+        self.front = float(ch["axle_from_front"])
+        self.rear = -(float(ch["length"]) - self.front)
+        self.half_width = float(ch["width"]) / 2.0
+        self._debug_t = 0.0
         self.limits = DriveLimits.from_config(cfg["limits"])
         self.limiter = VelocityLimiter(self.limits)
         self.odom = Odometry2D(self.track)
@@ -109,6 +123,9 @@ class VescDriver(Node):
 
         self.odom_pub = self.create_publisher(Odometry, "odom", 10)
         self.diag_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
+        self.bump_pub = self.create_publisher(PointStamped, "bump", 10)
+        # [target_l, target_r, measured_l, measured_r, current_l, current_r, accel_x] for tuning the bump rule
+        self.debug_pub = self.create_publisher(Float32MultiArray, "drive/debug", 10)
         self.create_subscription(Twist, "cmd_vel", self._on_cmd, 10)
         self.create_subscription(Imu, "imu/data", self._on_imu, qos_profile_sensor_data)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -132,6 +149,7 @@ class VescDriver(Node):
     def _on_imu(self, msg: Imu) -> None:
         with self._lock:
             self._gyro_z, self._gyro_t = float(msg.angular_velocity.z), time.monotonic()
+            self._accel_x = float(msg.linear_acceleration.x)
 
     def _on_estop(self, msg: Bool) -> None:
         with self._lock:
@@ -241,8 +259,9 @@ class VescDriver(Node):
             latch_state = self._estop.state
             gyro_z, gyro_fresh = self._gyro_z, now - self._gyro_t < self.imu_timeout
         telemetry_ok = all(now - s.values_t < self.telemetry_timeout for s in (self.left, self.right))
-        if not allowed or not telemetry_ok:
-            self._state = latch_state if not allowed else "telemetry_lost"
+        bumped = now < self._bump_until
+        if not allowed or not telemetry_ok or bumped:
+            self._state = "bump" if bumped else (latch_state if not allowed else "telemetry_lost")
             self.limiter.reset()
             self.heading_hold.reset()
             for side in (self.left, self.right):
@@ -260,11 +279,44 @@ class VescDriver(Node):
         wl, wr = body_to_wheels(v, w, self.track, self.limits.max_wheel_speed)
         if abs(v_t) > 1e-3 or abs(w_t) > 1e-3:      # only while a motion is requested, never when stopping
             wl, wr = apply_min_wheel_speed(wl, wr, self.min_wheel_speed)
+        if self._check_bump(now, wl, wr):
+            for side in (self.left, self.right):
+                self._brake(side)
+            return
         for side, speed in ((self.left, wl), (self.right, wr)):
             if abs(speed) < 1e-3:
                 self._brake(side)
             else:
                 self._send(vp.cmd_set_rpm(speed * self.k_erpm * side.sign, side.can_id))
+
+    def _check_bump(self, now: float, wl: float, wr: float) -> bool:
+        """Pushing against something the lidar cannot see (mirror, glass): stop, hold, report the contact."""
+        l, r = self.left.values, self.right.values
+        if l is None or r is None:
+            return False
+        ml = l.erpm / self.k_erpm * self.left.sign
+        mr = r.erpm / self.k_erpm * self.right.sign
+        cur = (l.current_motor, r.current_motor)
+        with self._lock:
+            ax = self._accel_x
+        if now - self._debug_t > 0.1:
+            self._debug_t = now
+            self.debug_pub.publish(Float32MultiArray(data=[wl, wr, ml, mr, cur[0], cur[1], ax if ax is not None else math.nan]))
+        if not self.bump_on:
+            return False
+        event = self.bump.update(now, (wl, wr), (ml, mr), cur, ax)
+        if event is None:
+            return False
+        cx, cy = contact_point(wl, wr, self.track, self.front, self.rear, self.half_width)
+        msg = PointStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.base_frame
+        msg.point.x, msg.point.y = cx, cy
+        self.bump_pub.publish(msg)
+        self._bump_until = now + self.bump_hold
+        self.limiter.reset()
+        self.get_logger().warn(f"BUMP ({event}): contact at ({cx:.2f}, {cy:.2f}) — braking, hold {self.bump_hold:.1f} s")
+        return True
 
     def _brake(self, side: _Side) -> None:
         moving = side.values is not None and abs(side.values.erpm / self.k_erpm) > STOPPED_MPS
@@ -314,6 +366,8 @@ class VescDriver(Node):
             status.level, status.message = DiagnosticStatus.OK, "ok"
         elif state == "estop":
             status.level, status.message = DiagnosticStatus.WARN, "estop engaged"
+        elif state == "bump":
+            status.level, status.message = DiagnosticStatus.WARN, "bump: stopped against an obstacle"
         elif state == "rearm":
             status.level, status.message = DiagnosticStatus.WARN, "estop released: waiting for a zero command"
         else:

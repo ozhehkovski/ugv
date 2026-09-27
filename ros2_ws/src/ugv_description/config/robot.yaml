@@ -50,6 +50,13 @@ drivetrain:
   brake_current: 1.5        # A, used to stop the wheels when the target is zero
   min_wheel_speed: 0.06     # m/s: on the floor the wheels stall below ~0.04 (≈95 ERPM); slower
                             # non-zero commands are lifted to this (curvature kept)
+  bump:                     # pushing against an invisible obstacle (mirror, glass) → stop, virtual wall
+    enabled: true
+    stall_current: 3.0      # A   (tune from /drive/debug on the real floor)
+    stall_ratio: 0.3        # wheel slower than 30 % of the command ...
+    stall_time: 0.4         # s   ... for this long
+    impact_accel: 0.0       # m/s² sharp deceleration; 0 = off until measured
+    hold: 1.0               # s   braking hold after a bump
   heading_hold:             # gyro yaw-rate PI: the front casters swing and push the robot off course
     enabled: true
     k_rate: 0.5             # rad/s correction per rad/s of yaw-rate error
