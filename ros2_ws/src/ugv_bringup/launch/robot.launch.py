@@ -28,6 +28,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_slam", default_value="true"),
         DeclareLaunchArgument("use_nav", default_value="true"),
+        DeclareLaunchArgument("use_follow", default_value="true"),
         DeclareLaunchArgument("webui_port", default_value="8090"),
         base,
         nav,
@@ -39,6 +40,9 @@ def generate_launch_description() -> LaunchDescription:
              output="screen", condition=IfCondition(use_slam)),
         Node(package="ugv_mapping", executable="accessibility", name="accessibility", respawn=True, respawn_delay=2.0, output="screen",
              condition=IfCondition(use_slam)),
+        # follow-me (idle until enabled from the web panel); needs the camera and the TensorRT engine
+        Node(package="ugv_follow", executable="follow", name="follow", respawn=True, respawn_delay=3.0,
+             output="screen", condition=IfCondition(LaunchConfiguration("use_follow"))),
         Node(package="ugv_webui", executable="webui", name="webui", respawn=True, respawn_delay=2.0, output="screen",
              parameters=[{"port": LaunchConfiguration("webui_port")}]),
     ])

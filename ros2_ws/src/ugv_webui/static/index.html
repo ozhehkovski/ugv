@@ -35,6 +35,10 @@
   .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
   #camPanel { aspect-ratio: 16 / 9; flex: none; }
   #cam { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+  #camOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #followBtn { width: 100%; padding: 12px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer;
+    background: #1e3a2a; color: #7ee2a8; border: 2px solid var(--ok); }
+  #followBtn.on { background: var(--ok); color: #06140c; }
   #camMsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
   .ctl { padding: 34px 12px 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 250px; }
   .ctl label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
@@ -88,6 +92,7 @@
   <span class="chip" id="cSafe">защита …</span>
   <span class="chip" id="cLidar">лидар …</span>
   <span class="chip" id="cNav">навигация …</span>
+  <span class="chip" id="cFollow">следование …</span>
 </header>
 <main>
   <section class="panel" id="mapPanel">
@@ -110,8 +115,10 @@
     <section class="panel" id="camPanel">
       <h2>Камера</h2>
       <img id="cam" alt="">
+      <canvas id="camOverlay"></canvas>
       <div id="camMsg">нет видео</div>
     </section>
+    <button id="followBtn" title="Встаньте перед роботом (до 3 м), нажмите — робот будет держаться в 40 см от вас">Следовать за мной</button>
     <section class="panel ctl">
       <h2>Ручное управление</h2>
       <label>Макс. скорость <span id="vmaxVal"></span></label>
@@ -234,6 +241,16 @@ function render() {
   if (s.wall_event && $("mapMsg").dataset.bump !== s.wall_event) {
     $("mapMsg").dataset.bump = s.wall_event; mapMsg("УДАР: поставил виртуальную стену в месте контакта", true);
   }
+  const f = s.follow || {};
+  const FST = { off: ["", "следование выкл"], search: ["warn", "<b>ищу человека перед роботом</b>"],
+    follow: ["ok", "<b>следую</b>"], lost: ["bad", "<b>потерял человека</b>"] };
+  const [fcls, ftxt] = FST[f.state] || ["", "следование: нет данных"];
+  const persons = (f.detections || []).length;
+  chip("cFollow", fcls, ftxt + (f.state === "follow" && f.gap !== null ? " · " + Math.round(f.gap * 100) + " см" : "")
+    + (persons ? " · людей: " + persons : ""));
+  $("followBtn").classList.toggle("on", !!f.enabled);
+  $("followBtn").textContent = f.enabled ? "Прекратить следование" : "Следовать за мной";
+  drawDetections(f);
   const ex = s.explore || "";
   const exploring = ex.startsWith("exploring") || ex.startsWith("exploration complete");
   const EX = [["exploring", "исследую"], ["exploration complete: returning", "исследование завершено, возвращаюсь"],
@@ -253,6 +270,35 @@ function render() {
   $("slamState").textContent = mstate === "running" ? "" : "(SLAM перезапускается)";
   drawMap();
 }
+
+// ---------------------------------------------------------------- camera overlay (people)
+const ov = $("camOverlay"), octx = ov.getContext("2d");
+function drawDetections(f) {
+  const r = $("cam").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  ov.width = Math.max(1, r.width * dpr); ov.height = Math.max(1, r.height * dpr);
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0); octx.clearRect(0, 0, r.width, r.height);
+  const [iw, ih] = f.img || [0, 0];
+  if (!iw || !$("cam").src) return;
+  const k = Math.min(r.width / iw, r.height / ih), ox = (r.width - iw * k) / 2, oy = (r.height - ih * k) / 2;
+  (f.detections || []).forEach((d, i) => {
+    const tgt = i === f.target_det;
+    octx.strokeStyle = tgt ? "#2fbf71" : "rgba(220,220,220,0.8)"; octx.lineWidth = tgt ? 4 : 2;
+    octx.strokeRect(ox + d[0] * k, oy + d[1] * k, (d[2] - d[0]) * k, (d[3] - d[1]) * k);
+    octx.fillStyle = octx.strokeStyle; octx.font = "12px sans-serif";
+    octx.fillText((tgt ? "цель " : "") + Math.round(d[4] * 100) + "%", ox + d[0] * k + 3, oy + d[1] * k + 14);
+  });
+}
+$("followBtn").onclick = async () => {
+  const on = !$("followBtn").classList.contains("on");
+  if (on && !confirm("Встаньте перед роботом (до 3 м). Робот будет держаться в 40 см от вас и поедет за вами. СТОП остановит.")) return;
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch("/api/follow", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on }), signal: ctl.signal });
+    const res = await r.json();
+    if (!res.success) alert("Не получилось: " + (res.message || res.error));
+  } catch (e) { alert("Нет ответа от робота"); } finally { clearTimeout(t); }
+};
 
 // ---------------------------------------------------------------- map
 const cv = $("map"), ctx = cv.getContext("2d");

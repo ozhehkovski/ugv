@@ -19,7 +19,8 @@ All geometry lives in [`robot.yaml`](ros2_ws/src/ugv_description/config/robot.ya
 - `ugv_drivers`: VESC diff-drive driver, RPLIDAR, BNO085, camera, command mux, footprint publisher. The pure-Python core has unit tests.
 - `ugv_bringup`: launch files and configs (EKF, safety chain, SLAM baseline).
 - `ugv_mapping`: `map_manager`, which keeps the SLAM map across restarts (maps in `~/ugv_maps`, autosave, load/new/save-as, set pose), and the accessible-terrain layer.
-- `ugv_interfaces`: services (`MapCommand`).
+- `ugv_interfaces`: services (`MapCommand`, `SetWalls`).
+- `ugv_follow`: follow-me. YOLO on TensorRT plus lidar ranging, a single-target tracker, and a 40 cm gap controller.
 - `ugv_webui`: operator web panel on port 8090. It shows the live SLAM map with lidar and footprint, the camera and the status. It has a joystick/WASD teleop with a dead-man, and a big STOP (Space).
 
 ## Velocity safety chain

@@ -115,6 +115,9 @@ class WebUi(Node):
         self.cancel_all_cli = self.create_client(CancelGoal, "navigate_to_pose/_action/cancel_goal")
         self.explore_cli = self.create_client(SetBool, "explorer/enable")
         self.escape_cli = self.create_client(Trigger, "safety_governor/escape")
+        self.follow_cli = self.create_client(SetBool, "follow/enable")
+        self.follow: dict[str, Any] = {}
+        self.create_subscription(String, "follow/status", self._on_follow_status, 10)
         self.explore_status = ""
         self.create_subscription(String, "explorer/status", self._on_explore_status, LATCHED)
         self.create_subscription(Path, "plan", self._on_plan, 10)
@@ -188,6 +191,8 @@ class WebUi(Node):
         goal.pose.pose.position.x, goal.pose.pose.position.y = x, y
         goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = math.sin(th / 2.0), math.cos(th / 2.0)
         self.gate.cancel()                       # stop manual driving: navigation takes over
+        if self.follow.get("enabled") and self.follow_cli.service_is_ready():
+            self.follow_cli.call_async(SetBool.Request(data=False))
         with self.lock:
             self.nav = {"state": "sending", "goal": [x, y, th], "remaining": None, "recoveries": 0, "message": ""}
         # parked tight against something (manual driving)? Nav2 cannot plan from inside its margin
@@ -236,9 +241,12 @@ class WebUi(Node):
         force=False (manual driving, called at 10 Hz): only when something is actually navigating."""
         with self.lock:
             busy = (self.nav_handle is not None or self.nav["state"] in ("sending", "active")
-                    or self.explore_status.startswith(("exploring", "exploration complete")))
+                    or self.explore_status.startswith(("exploring", "exploration complete"))
+                    or bool(self.follow.get("enabled")))
         if not (force or busy):
             return
+        if self.follow_cli.service_is_ready():
+            self.follow_cli.call_async(SetBool.Request(data=False))
         if self.explore_cli.service_is_ready():
             self.explore_cli.call_async(SetBool.Request(data=False))
         if self.cancel_all_cli.service_is_ready():
@@ -253,6 +261,37 @@ class WebUi(Node):
             with self.lock:
                 self.nav["message"] = reason
 
+    def _on_follow_status(self, msg: String) -> None:
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        with self.lock:
+            self.follow = data
+
+    def _call_bool(self, cli: Any, value: bool, timeout: float = 5.0) -> dict[str, Any]:
+        if not cli.wait_for_service(timeout_sec=2.0):
+            return {"success": False, "message": "сервис недоступен"}
+        fut = cli.call_async(SetBool.Request(data=value))
+        deadline = time.monotonic() + timeout
+        while not fut.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not fut.done():
+            return {"success": False, "message": "нет ответа"}
+        return {"success": fut.result().success, "message": fut.result().message}
+
+    def follow_mode(self, on: bool) -> dict[str, Any]:
+        if on and self.estop:
+            return {"success": False, "message": "снимите аварийный стоп"}
+        if on:
+            self.gate.cancel()
+            # one mode at a time: stop navigation / exploration first
+            if self.explore_cli.service_is_ready():
+                self.explore_cli.call_async(SetBool.Request(data=False))
+            if self.cancel_all_cli.service_is_ready():
+                self.cancel_all_cli.call_async(CancelGoal.Request())
+        return self._call_bool(self.follow_cli, on)
+
     def _on_explore_status(self, msg: String) -> None:
         with self.lock:
             self.explore_status = msg.data
@@ -264,6 +303,8 @@ class WebUi(Node):
             return {"success": False, "message": "исследование недоступно"}
         if on:
             self.gate.cancel()
+            if self.follow.get("enabled") and self.follow_cli.service_is_ready():
+                self.follow_cli.call_async(SetBool.Request(data=False))
         fut = self.explore_cli.call_async(SetBool.Request(data=on))
         deadline = time.monotonic() + 5.0
         while not fut.done() and time.monotonic() < deadline:
@@ -427,6 +468,7 @@ class WebUi(Node):
                 "nav": dict(self.nav),
                 "explore": self.explore_status,
                 "walls": self.walls,
+                "follow": self.follow,
                 "wall_event": self.wall_event,
                 "plan": self.plan,
             }
@@ -504,6 +546,9 @@ class WebUi(Node):
                         if not isinstance(segs, list) or len(segs) % 4:
                             raise ValueError("segments must be a flat list x1, y1, x2, y2, ...")
                         self._json(ui.set_walls(str(body.get("mode", "set")), segs))
+                        return
+                    elif self.path == "/api/follow":
+                        self._json(ui.follow_mode(bool(body["on"])))
                         return
                     elif self.path == "/api/explore":
                         self._json(ui.explore(bool(body["on"])))

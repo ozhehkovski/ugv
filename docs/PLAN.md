@@ -107,19 +107,27 @@
   it "sees" the reflected room). Then the safety_governor crashed (rclpy: one log call site used with two severities) →
   no commands → the driver watchdog stopped the wheels (fail-safe worked), but nothing restarted it.
   Fixed: logger misuse (also in vesc_driver), respawn for our nodes (not map_manager: it owns the slam_toolbox process).
-- [ ] MIRRORS / GLASS (lidar-invisible): virtual walls drawn in the web panel (costmaps + governor), bump detection
-  (motor current up + wheels stalled → stop, back off, mark an obstacle), and hardware options (ultrasonic / ToF sensors).
+- [x] MIRRORS / GLASS: virtual walls (web panel «Стена», per map, costmaps + governor + accessibility/exploration) and bump
+  detection (wheel < 30 % of the command at > 3 A for 0.4 s → brake, hold 1 s, wall across the path at the contact).
+  Floor currents in normal driving ≤ 1.13 A. TODO: verify a real bump (box / hand), measure the IMU impact threshold.
+- [ ] Hardware for glass/mirrors before contact: ultrasonic or ToF (VL53L1X) sensors on the front edge.
 - [ ] Escape vs the velocity smoother: the escape picks a full-speed motion, but the smoothed ramp-up gets lifted by
   min_wheel_speed and blocked near 0 cm clearance.
 - [ ] Estop state is lost on a stack restart (webui starts with estop=false): persist it.
 - [ ] Waypoints / patrol route.
 
-### 5. Follow-me
-- [ ] YOLO11n (TensorRT) + ByteTrack + re-ID so the robot locks onto one person.
-- [ ] Range to the person from the lidar (legs), bearing from the camera.
-- [ ] Controller keeps 0.4 m from the nose, never reverses. Output to `cmd_vel/follow`.
-- [ ] Person lost: Nav2 to the last seen point, then search by turning in place.
-- [ ] Mode state machine: manual / explore / navigate / follow.
+### 5. Follow-me (implemented 2026-09-27, floor test pending)
+- [x] Person detection: YOLO11n TensorRT engine run directly with TensorRT + cuda-python (the system Python cannot import
+  torch/ultralytics because of numpy 2 in ~/.local). 26 ms per frame on the Orin Nano. Model in ~/ugv_models.
+- [x] Range from the lidar (nearest cluster in the bbox sector, legs), else from the bbox bottom on the floor.
+- [x] Tracker (odom frame): lock the nearest person in front ≤ 3 m, alpha-beta filter, lidar leg clusters keep the track
+  at close range, re-acquire only nearby and with similar clothes (HSV histogram).
+- [x] Controller: 40 cm from the nose, never reverses, tank turn when the person is > 40° to the side. Output
+  cmd_vel/follow → full safety chain. Lost → stop, look toward the last bearing.
+- [x] Web panel: «Следовать за мной», person boxes over the video (target in green), gap in cm.
+  STOP / manual / goal / exploration switch it off; one autonomous mode at a time.
+- [ ] Floor test with a person; tune gains; people need a larger safety margin than walls.
+- [ ] Lost for long → Nav2 to the last seen point.
 
 ### 6. Multi-robot
 - [ ] Namespaces + TF prefix, DDS over Wi-Fi (CycloneDDS or Zenoh).
