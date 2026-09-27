@@ -16,6 +16,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 
+MODES = ("mapping", "localization")
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
@@ -31,6 +32,7 @@ def auto_name(now: datetime | None = None) -> str:
 class ActiveState:
     map: str | None = None
     pose: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    mode: str = "mapping"     # "mapping": SLAM extends the map · "localization": the map is fixed
 
 
 class MapStore:
@@ -95,11 +97,14 @@ class MapStore:
             raise ValueError(f"invalid active map name {name!r}")
         if len(pose) != 3:
             raise ValueError(f"invalid pose {pose!r}")
-        return ActiveState(map=name, pose=[float(v) for v in pose])
+        mode = data.get("mode", "mapping")
+        if mode not in MODES:
+            raise ValueError(f"invalid mode {mode!r}")
+        return ActiveState(map=name, pose=[float(v) for v in pose], mode=mode)
 
     def write_active(self, state: ActiveState) -> None:
         """Atomic write: a power cut never leaves a half-written file."""
-        payload = {"map": state.map, "pose": [round(v, 4) for v in state.pose],
+        payload = {"map": state.map, "pose": [round(v, 4) for v in state.pose], "mode": state.mode,
                    "updated": datetime.now().isoformat(timespec="seconds")}
         fd, tmp = tempfile.mkstemp(dir=self.root, prefix=".active-", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as f:

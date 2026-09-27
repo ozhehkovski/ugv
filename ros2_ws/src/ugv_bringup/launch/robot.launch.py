@@ -36,6 +36,8 @@ def generate_launch_description() -> LaunchDescription:
         Node(package="ugv_mapping", executable="map_manager", name="map_manager", output="screen",
              condition=IfCondition(use_slam),
              parameters=[{"slam_params": os.path.join(pkg, "config", "slam_toolbox.yaml")}]),
+        Node(package="ugv_mapping", executable="carry_detector", name="carry_detector", respawn=True, respawn_delay=2.0,
+             output="screen", condition=IfCondition(use_slam)),
         Node(package="ugv_mapping", executable="virtual_walls", name="virtual_walls", respawn=True, respawn_delay=2.0,
              output="screen", condition=IfCondition(use_slam)),
         Node(package="ugv_mapping", executable="accessibility", name="accessibility", respawn=True, respawn_delay=2.0, output="screen",

@@ -71,6 +71,10 @@
   #banner { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 10px; text-align: center;
     background: var(--bad); color: #fff; font-weight: 700; }
   #banner.show { display: block; }
+  #relocBanner { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9; padding: 10px; text-align: center;
+    background: var(--warn); color: #1a1300; font-weight: 700; }
+  #relocBanner.show { display: block; }
+  #relocBanner button { margin-left: 8px; padding: 4px 10px; border-radius: 6px; border: 0; font-weight: 700; cursor: pointer; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto; overflow: auto; }
     #mapPanel { height: 55vh; }
@@ -82,6 +86,8 @@
 </head>
 <body>
 <div id="banner">НЕТ СВЯЗИ С РОБОТОМ — кнопка СТОП не дойдёт. Используйте физический выключатель.</div>
+<div id="relocBanner">Робота переносили — карта заморожена. Нажмите «Я здесь» и укажите, где он стоит,
+  или <button id="poseOk">Позиция верна</button></div>
 <header>
   <h1>UGV</h1>
   <span class="chip" id="cConn">связь …</span>
@@ -130,6 +136,10 @@
       <h2>Карты</h2>
       <label>Активная <span><b id="activeMap">…</b> <span id="slamState"></span></span></label>
       <select id="mapList"></select>
+      <div class="btnRow">
+        <button id="modeWork" title="Карта не меняется, робот только определяет по ней, где он">Работа</button>
+        <button id="modeMap" title="Робот достраивает карту. Не переносите его руками в этом режиме">Картографирование</button>
+      </div>
       <div class="btnRow">
         <button id="mSave">Сохранить</button><button id="mSaveAs">Сохранить как…</button>
       </div>
@@ -265,9 +275,15 @@ function render() {
     $("mapMsg").dataset.last = ex; mapMsg((EX.find(([k]) => ex.startsWith(k)) || [0, ex])[1]);
   }
   $("cancelBtn").style.display = (nav.state === "active" || nav.state === "sending" || exploring) ? "" : "none";
-  const [mname, mstate] = (s.map_status || "|").split("|");
+  const [mname, mstate, mmode, mflags] = ((s.map_status || "") + "|||").split("|");
   if (mname) $("activeMap").textContent = mname;
-  $("slamState").textContent = mstate === "running" ? "" : "(SLAM перезапускается)";
+  $("slamState").textContent = mstate === "running" ? (mmode === "localization" ? "· работа" : "· картографирование")
+                                                   : "(SLAM перезапускается)";
+  $("modeWork").classList.toggle("on", mmode === "localization");
+  $("modeMap").classList.toggle("on", mmode === "mapping");
+  $("mSave").disabled = mmode === "localization";
+  $("relocBanner").classList.toggle("show", mflags.includes("relocalize") || mflags.includes("carried"));
+  $("poseOk").style.display = mflags.includes("carried") ? "none" : "";
   drawMap();
 }
 
@@ -496,7 +512,7 @@ $("exploreBtn").onclick = async () => {
 $("accessBtn").onclick = () => { showAccess = !showAccess; $("accessBtn").classList.toggle("on", showAccess); drawMap(); };
 
 // ---------------------------------------------------------------- maps
-const MAP_BTNS = ["mSave", "mSaveAs", "mLoad", "mNew", "mDel"];
+const MAP_BTNS = ["mSave", "mSaveAs", "mLoad", "mNew", "mDel", "modeWork", "modeMap"];
 function mapMsg(text, bad) { $("mapMsg").textContent = text; $("mapMsg").classList.toggle("bad", !!bad); }
 function fillMaps(res) {
   const sel = $("mapList"), keep = sel.value;
@@ -526,6 +542,9 @@ async function refreshMaps() {
   try { const r = await fetch("/api/maps", { cache: "no-store" }); fillMaps(await r.json()); } catch (e) { mapMsg("список карт недоступен", true); }
 }
 $("mSave").onclick = () => mapCmd("save");
+$("modeWork").onclick = () => { if (confirm("Режим «Работа»: текущая карта будет сохранена и дальше не меняется.")) mapCmd("mode", "localization"); };
+$("modeMap").onclick = () => { if (confirm("Режим «Картографирование»: робот будет достраивать карту. Не переносите его руками, пока он включён.")) mapCmd("mode", "mapping"); };
+$("poseOk").onclick = () => mapCmd("confirm_pose");
 $("mSaveAs").onclick = () => { const n = prompt("Имя карты (латиница, цифры, . _ -)"); if (n) mapCmd("save_as", n.trim()); };
 $("mLoad").onclick = () => { const n = $("mapList").value; if (n && confirm("Загрузить карту «" + n + "»? Текущая будет сохранена. Робот должен стоять там, где был на этой карте, иначе нажмите «Я здесь».")) mapCmd("load", n); };
 $("mNew").onclick = () => { if (confirm("Начать новую карту? Текущая будет сохранена.")) mapCmd("new"); };

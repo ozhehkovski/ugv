@@ -66,6 +66,12 @@
 - [ ] EKF: fuses wheel vx + IMU yaw/vyaw. Revisit if SLAM shows drift on long loops.
 
 ### 3. Maps (persistence ✅, accessibility ✅, exploration → after stage 4)
+- [x] 2026-09-27 map corruption (rooms glued behind walls, rotated copies): the robot was carried by hand while SLAM was mapping
+  (tape tests, repositioning) and ~19 restarts continued the map from stored poses. Fixes:
+  map modes («Работа» = slam_toolbox localization, the map is fixed · «Картографирование» = mapping; loaded maps start in
+  localization, exploration switches to mapping); carry detection from the IMU (tilt / vertical accel while no wheel commands)
+  → SLAM paused, goals/exploration/follow blocked until «Я здесь» or «Позиция верна».
+- [ ] Rebuild the house map (new map + exploration, do not touch the robot), then switch to «Работа».
 - [x] `map_manager` owns slam_toolbox. It continues the active map at start (map_file_name + last pose), stores the pose every 2 s,
   autosaves every 60 s and on stop (systemd KillMode=mixed, so the save happens before slam_toolbox stops).
   Verified: drove 1.31 m, restarted the service → pose (1.342, 0.051) → (1.328, 0.062), same map continued.
@@ -111,6 +117,8 @@
   detection (wheel < 30 % of the command at > 3 A for 0.4 s → brake, hold 1 s, wall across the path at the contact).
   Floor currents in normal driving ≤ 1.13 A. TODO: verify a real bump (box / hand), measure the IMU impact threshold.
 - [ ] Hardware for glass/mirrors before contact: ultrasonic or ToF (VL53L1X) sensors on the front edge.
+- [ ] Low obstacles (shoes, bags) under the lidar: camera floor segmentation (floor_vision.py, tested) → node with memory in
+  odom (governor) + a camera-scan costmap layer. Robot turned onto flip-flops and got a wheel lifted (2026-09-27).
 - [ ] Escape vs the velocity smoother: the escape picks a full-speed motion, but the smoothed ramp-up gets lifted by
   min_wheel_speed and blocked near 0 cm clearance.
 - [ ] Estop state is lost on a stack restart (webui starts with estop=false): persist it.
@@ -128,6 +136,8 @@
   STOP / manual / goal / exploration switch it off; one autonomous mode at a time.
 - [ ] Floor test with a person; tune gains; people need a larger safety margin than walls.
 - [ ] Lost for long → Nav2 to the last seen point.
+- [ ] Person behind a sofa: the lidar range in the bbox sector hit the sofa → robot drove at the sofa and lost the person.
+  Occluder-aware ranging + Nav2 detour when the straight line is blocked.
 
 ### 6. Multi-robot
 - [ ] Namespaces + TF prefix, DDS over Wi-Fi (CycloneDDS or Zenoh).

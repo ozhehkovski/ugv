@@ -180,9 +180,20 @@ class WebUi(Node):
             self.plan = pts[::step] + pts[-1:] if pts else []
 
     # ------------------------------------------------------------------ navigation
+    def _pose_unconfirmed(self) -> str | None:
+        with self.lock:
+            flags = (self.map_status.split("|") + ["", "", "", ""])[3]
+        if "carried" in flags:
+            return "робота сейчас несут"
+        if "relocalize" in flags:
+            return "робота переносили: нажмите «Я здесь» (или «Позиция верна»)"
+        return None
+
     def nav_goal(self, x: float, y: float, th: float) -> dict[str, Any]:
         if self.estop:
             return {"success": False, "message": "снимите аварийный стоп"}
+        if (why := self._pose_unconfirmed()) is not None:
+            return {"success": False, "message": why}
         if not self.nav_client.wait_for_server(timeout_sec=2.0):
             return {"success": False, "message": "навигация (Nav2) недоступна"}
         goal = NavigateToPose.Goal()
@@ -283,6 +294,8 @@ class WebUi(Node):
     def follow_mode(self, on: bool) -> dict[str, Any]:
         if on and self.estop:
             return {"success": False, "message": "снимите аварийный стоп"}
+        if on and (why := self._pose_unconfirmed()) is not None:
+            return {"success": False, "message": why}
         if on:
             self.gate.cancel()
             # one mode at a time: stop navigation / exploration first
@@ -299,6 +312,12 @@ class WebUi(Node):
     def explore(self, on: bool) -> dict[str, Any]:
         if on and self.estop:
             return {"success": False, "message": "снимите аварийный стоп"}
+        if on and (why := self._pose_unconfirmed()) is not None:
+            return {"success": False, "message": why}
+        if on and (self.map_status.split("|") + ["", "", ""])[2] == "localization":
+            res = self.map_command("mode", "mapping")      # exploring means extending the map
+            if not res["success"]:
+                return {"success": False, "message": "не удалось включить картографирование: " + res["message"]}
         if not self.explore_cli.wait_for_service(timeout_sec=2.0):
             return {"success": False, "message": "исследование недоступно"}
         if on:

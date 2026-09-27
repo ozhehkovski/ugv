@@ -23,6 +23,7 @@ setup(
             "accessibility = ugv_mapping.accessibility_node:main",
             "explorer = ugv_mapping.explorer_node:main",
             "virtual_walls = ugv_mapping.virtual_walls_node:main",
+            "carry_detector = ugv_mapping.carry_node:main",
         ],
     },
 )

@@ -27,12 +27,13 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
-from slam_toolbox.srv import SaveMap, SerializePoseGraph
+from slam_toolbox.srv import Pause, SaveMap, SerializePoseGraph
+from std_msgs.msg import Bool
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 from ugv_interfaces.srv import MapCommand
 
-from .map_store import ActiveState, MapStore, auto_name
+from .map_store import MODES, ActiveState, MapStore, auto_name
 
 CALL_TIMEOUT = 20.0
 
@@ -70,6 +71,14 @@ class MapManager(Node):
         self.tfl = TransformListener(self.tf, self)
         self.serialize_cli = self.create_client(SerializePoseGraph, "/slam_toolbox/serialize_map", callback_group=cb)
         self.save_img_cli = self.create_client(SaveMap, "/slam_toolbox/save_map", callback_group=cb)
+        self.pause_cli = self.create_client(Pause, "/slam_toolbox/pause_new_measurements", callback_group=cb)
+        # the robot is being carried: freeze SLAM, then ask the operator where it was put down
+        self.carried = False
+        self.paused = False
+        self.relocalize = False
+        self.create_subscription(Bool, "carried", self._on_carried,
+                                 QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                            durability=DurabilityPolicy.TRANSIENT_LOCAL), callback_group=cb)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.status_pub = self.create_publisher(String, "~/status", latched)
         self.create_timer(5.0, self._publish_status, callback_group=cb)
@@ -86,13 +95,18 @@ class MapManager(Node):
 
     # ---------------------------------------------------------------- slam process
     def _start_slam(self, load: str | None, pose: list[float] | None) -> None:
-        cmd = ["ros2", "run", "slam_toolbox", "async_slam_toolbox_node", "--ros-args",
-               "-r", "__node:=slam_toolbox", "--params-file", self.slam_params]
+        localize = bool(load) and self.state.mode == "localization"
+        exe = "localization_slam_toolbox_node" if localize else "async_slam_toolbox_node"
+        cmd = ["ros2", "run", "slam_toolbox", exe, "--ros-args",
+               "-r", "__node:=slam_toolbox", "--params-file", self.slam_params,
+               "-p", f"mode:={'localization' if localize else 'mapping'}"]
+        self.paused = False
         if load:
             x, y, th = (float(v) for v in (pose or [0.0, 0.0, 0.0]))
             cmd += ["-p", f"map_file_name:={self.store.base(load)}",
                     "-p", f"map_start_pose:=[{x:.4f}, {y:.4f}, {th:.4f}]"]
-            self.get_logger().info(f"SLAM: continuing map {load!r} at ({x:.2f}, {y:.2f}, {math.degrees(th):.0f}°)")
+            what = "localizing on" if localize else "continuing"
+            self.get_logger().info(f"SLAM: {what} map {load!r} at ({x:.2f}, {y:.2f}, {math.degrees(th):.0f}°)")
         else:
             self.get_logger().info(f"SLAM: new map {self.state.map!r}")
         self.proc = subprocess.Popen(cmd, start_new_session=True)
@@ -112,7 +126,7 @@ class MapManager(Node):
             proc.wait(timeout=5.0)
 
     def _start_new(self) -> None:
-        self.state = ActiveState(map=auto_name(), pose=[0.0, 0.0, 0.0])
+        self.state = ActiveState(map=auto_name(), pose=[0.0, 0.0, 0.0], mode="mapping")
         self.store.write_active(self.state)
         self._start_slam(None, None)
 
@@ -130,6 +144,8 @@ class MapManager(Node):
 
     def _save(self, name: str) -> None:
         """Serialize the running pose graph (+ PGM image) into <maps>/<name>/map.*"""
+        if self.state.mode != "mapping":
+            raise RuntimeError("the map is fixed (mode «Работа»): switch to mapping to change it")
         if self.proc is None or self.proc.poll() is not None:
             raise RuntimeError("slam_toolbox is not running")
         os.makedirs(self.store.dir(name), exist_ok=True)
@@ -144,7 +160,7 @@ class MapManager(Node):
         self.get_logger().info(f"map {name!r} saved")
 
     def _autosave_tick(self) -> None:
-        if time.monotonic() - self.slam_started < 20.0 or not self.state.map:
+        if time.monotonic() - self.slam_started < 20.0 or not self.state.map or self.state.mode != "mapping" or self.paused:
             return
         with self.lock:
             try:
@@ -154,7 +170,7 @@ class MapManager(Node):
 
     def _pose_tick(self) -> None:
         # after a SLAM restart the TF buffer still holds the old map→odom: wait for the new one
-        if time.monotonic() - self.slam_started < 8.0:
+        if time.monotonic() - self.slam_started < 8.0 or self.carried or self.relocalize:
             return
         if not self.lock.acquire(blocking=False):      # a map operation is running
             return
@@ -207,10 +223,27 @@ class MapManager(Node):
             self._save_current_quietly()
             start = pose or self.store.read_meta_pose(name)
             self._stop_slam()
-            self.state = ActiveState(map=name, pose=start)
+            self.state = ActiveState(map=name, pose=start, mode="localization")   # a loaded map is used as-is
             self.store.write_active(self.state)
             self._start_slam(name, start)
             return f"loaded {name}"
+        if cmd == "mode":
+            if name not in MODES:
+                raise ValueError(f"mode must be one of {MODES}")
+            if name == self.state.mode:
+                return f"already {name}"
+            if name == "localization":
+                self._save(self.state.map)            # the fixed map = the map as it is now
+            elif not self.store.exists(self.state.map):
+                raise ValueError("no saved map to extend")
+            self._stop_slam()
+            self.state.mode = name
+            self.store.write_active(self.state)
+            self._start_slam(self.state.map, self.state.pose)
+            return f"mode {name}"
+        if cmd == "confirm_pose":
+            self._resume()
+            return "pose confirmed"
         if cmd == "new":
             self._save_current_quietly()
             self._stop_slam()
@@ -219,7 +252,9 @@ class MapManager(Node):
         if cmd == "set_pose":
             if not pose:
                 raise ValueError("set_pose needs [x, y, theta]")
-            self._save(self.state.map)          # must exist to be reloaded at the new pose
+            if self.state.mode == "mapping" and not self.paused:
+                self._save(self.state.map)      # must exist to be reloaded at the new pose
+            self.relocalize = False
             self._stop_slam()
             self.state.pose = pose
             self.store.write_active(self.state)
@@ -235,7 +270,7 @@ class MapManager(Node):
         raise ValueError(f"unknown command {cmd!r}")
 
     def _save_current_quietly(self) -> None:
-        if not self.state.map:
+        if not self.state.map or self.state.mode != "mapping" or self.paused:
             return
         try:
             self._save(self.state.map)
@@ -244,7 +279,40 @@ class MapManager(Node):
 
     def _publish_status(self) -> None:
         running = self.proc is not None and self.proc.poll() is None
-        self.status_pub.publish(String(data=f"{self.state.map or ''}|{'running' if running else 'stopped'}"))
+        flags = ",".join(f for f, on in (("carried", self.carried), ("relocalize", self.relocalize),
+                                         ("paused", self.paused)) if on)
+        self.status_pub.publish(String(
+            data=f"{self.state.map or ''}|{'running' if running else 'stopped'}|{self.state.mode}|{flags}"))
+
+    # ---------------------------------------------------------------- carried robot
+    def _toggle_pause(self, want: bool) -> None:
+        """slam_toolbox's Pause service toggles; call until the state is what we want."""
+        for _ in range(2):
+            if self.paused == want:
+                return
+            try:
+                res = self._call(self.pause_cli, Pause.Request())
+            except RuntimeError as exc:
+                self.get_logger().warn(f"pause SLAM: {exc}")
+                return
+            self.paused = bool(res.status)
+
+    def _on_carried(self, msg: Bool) -> None:
+        if msg.data == self.carried:
+            return
+        self.carried = bool(msg.data)
+        with self.lock:
+            if self.carried:
+                self.get_logger().warn("robot is being carried: SLAM paused")
+                self._toggle_pause(True)
+                self.relocalize = True
+            else:
+                self.get_logger().warn("robot put down: waiting for the operator to confirm/set the pose")
+        self._publish_status()
+
+    def _resume(self) -> None:
+        self.relocalize = False
+        self._toggle_pause(False)
 
     # ---------------------------------------------------------------- shutdown
     def shutdown(self) -> None:
